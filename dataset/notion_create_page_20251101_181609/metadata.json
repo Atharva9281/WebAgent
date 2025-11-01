@@ -1,0 +1,247 @@
+{
+  "task_id": "notion_create_page",
+  "task_name": "Create Page in Notion",
+  "app": "notion",
+  "goal": "Create a new page titled 'Agent Test Page' with some content",
+  "start_url": "https://www.notion.so",
+  "started_at": "2025-11-01T18:16:09.578119",
+  "steps": [
+    {
+      "step": 1,
+      "url": "https://www.notion.so/29efa314386e80689730e8002ac3ddbc?showMoveTo=true&saveParent=true",
+      "screenshot": "step_01.png",
+      "action": {
+        "action": "click",
+        "raw_response": "ACTION: click [2]",
+        "reasoning": "",
+        "element_id": 2
+      },
+      "observation": "Clicked element [2]: ",
+      "ui_state": {
+        "url": "https://www.notion.so/Getting-Started-29efa314386e802db2b1f7923da8d009",
+        "title": "Getting Started",
+        "modals": [
+          {
+            "type": "overlay",
+            "visible": true
+          }
+        ],
+        "forms": [
+          {
+            "type": "input",
+            "input_type": "checkbox",
+            "name": "",
+            "placeholder": "",
+            "id": "",
+            "aria_label": "",
+            "value": "on",
+            "filled": true
+          },
+          {
+            "type": "input",
+            "input_type": "checkbox",
+            "name": "",
+            "placeholder": "",
+            "id": "",
+            "aria_label": "",
+            "value": "on",
+            "filled": true
+          },
+          {
+            "type": "input",
+            "input_type": "checkbox",
+            "name": "",
+            "placeholder": "",
+            "id": "",
+            "aria_label": "",
+            "value": "on",
+            "filled": true
+          },
+          {
+            "type": "input",
+            "input_type": "checkbox",
+            "name": "",
+            "placeholder": "",
+            "id": "",
+            "aria_label": "",
+            "value": "on",
+            "filled": true
+          },
+          {
+            "type": "input",
+            "input_type": "checkbox",
+            "name": "",
+            "placeholder": "",
+            "id": "",
+            "aria_label": "",
+            "value": "on",
+            "filled": true
+          }
+        ],
+        "dropdowns": [
+          {
+            "type": "expanded",
+            "aria_label": "",
+            "visible": true
+          },
+          {
+            "type": "expanded",
+            "aria_label": "",
+            "visible": true
+          }
+        ],
+        "loading": {
+          "is_loading": false,
+          "indicators": []
+        },
+        "page_hash": "0e7072fd04c78a6c987dd2850ec69119"
+      },
+      "description": "Page: https://www.notion.so/Getting-Started-29efa314386e802db2b1f7923da8d009 | Overlay is open | 5 form field(s) filled | 2 dropdown(s) open",
+      "timestamp": "2025-11-01T18:16:51.843536"
+    },
+    {
+      "step": 2,
+      "url": "https://www.notion.so/Agent-Test-Page-29efa314386e80689730e8002ac3ddbc?showMoveTo=true&saveParent=true",
+      "screenshot": "step_02.png",
+      "action": {
+        "action": "type",
+        "raw_response": "ACTION: type [46]; Agent Test Page",
+        "reasoning": "",
+        "element_id": 46,
+        "text": "Agent Test Page"
+      },
+      "observation": "Typed into [46]: 'Agent Test Page'",
+      "ui_state": {
+        "url": "https://www.notion.so/29efa314386e80689730e8002ac3ddbc?showMoveTo=true&saveParent=true",
+        "title": "New page",
+        "modals": [
+          {
+            "type": "overlay",
+            "visible": true
+          }
+        ],
+        "forms": [],
+        "dropdowns": [
+          {
+            "type": "expanded",
+            "aria_label": "",
+            "visible": true
+          },
+          {
+            "type": "expanded",
+            "aria_label": "",
+            "visible": true
+          },
+          {
+            "type": "listbox",
+            "visible": true
+          }
+        ],
+        "loading": {
+          "is_loading": false,
+          "indicators": []
+        },
+        "page_hash": "cfcf19438a3e59d182aeecdab9d081c3"
+      },
+      "description": "Page: https://www.notion.so/29efa314386e80689730e8002ac3ddbc?showMoveTo=true&saveParent=true | Overlay is open | 3 dropdown(s) open",
+      "timestamp": "2025-11-01T18:17:01.535490"
+    },
+    {
+      "step": 3,
+      "url": "https://www.notion.so/Agent-Test-Page-29efa314386e80689730e8002ac3ddbc?showMoveTo=true&saveParent=true",
+      "screenshot": "step_03.png",
+      "action": {
+        "action": "type",
+        "raw_response": "ACTION: type [50]; Some content",
+        "reasoning": "",
+        "element_id": 50,
+        "text": "Some content"
+      },
+      "observation": "Typed into [50]: 'Some content'",
+      "ui_state": {
+        "url": "https://www.notion.so/Agent-Test-Page-29efa314386e80689730e8002ac3ddbc?showMoveTo=true&saveParent=true",
+        "title": "Agent Test Page",
+        "modals": [
+          {
+            "type": "overlay",
+            "visible": true
+          }
+        ],
+        "forms": [],
+        "dropdowns": [
+          {
+            "type": "expanded",
+            "aria_label": "",
+            "visible": true
+          },
+          {
+            "type": "expanded",
+            "aria_label": "",
+            "visible": true
+          },
+          {
+            "type": "listbox",
+            "visible": true
+          }
+        ],
+        "loading": {
+          "is_loading": false,
+          "indicators": []
+        },
+        "page_hash": "4e0ee857185c98056578763b24accaef"
+      },
+      "description": "Page: https://www.notion.so/Agent-Test-Page-29efa314386e80689730e8002ac3ddbc?showMoveTo=true&saveParent=true | Overlay is open | 3 dropdown(s) open",
+      "timestamp": "2025-11-01T18:17:11.024642"
+    },
+    {
+      "step": 4,
+      "url": "https://www.notion.so/Agent-Test-Page-29efa314386e80689730e8002ac3ddbc?showMoveTo=true&saveParent=true",
+      "screenshot": "step_04.png",
+      "action": {
+        "action": "finish",
+        "raw_response": "ACTION: finish; Successfully created a new page titled 'Agent Test Page' with some content.",
+        "reasoning": "",
+        "summary": "Successfully created a new page titled 'Agent Test Page' with some content."
+      },
+      "observation": "Task completed successfully",
+      "ui_state": {
+        "url": "https://www.notion.so/Agent-Test-Page-29efa314386e80689730e8002ac3ddbc?showMoveTo=true&saveParent=true",
+        "title": "Agent Test Page",
+        "modals": [
+          {
+            "type": "overlay",
+            "visible": true
+          }
+        ],
+        "forms": [],
+        "dropdowns": [
+          {
+            "type": "expanded",
+            "aria_label": "",
+            "visible": true
+          },
+          {
+            "type": "expanded",
+            "aria_label": "",
+            "visible": true
+          },
+          {
+            "type": "listbox",
+            "visible": true
+          }
+        ],
+        "loading": {
+          "is_loading": false,
+          "indicators": []
+        },
+        "page_hash": "6501bf65baf7f34b3257aa358d20a1bc"
+      },
+      "description": "Page: https://www.notion.so/Agent-Test-Page-29efa314386e80689730e8002ac3ddbc?showMoveTo=true&saveParent=true | Overlay is open | 3 dropdown(s) open",
+      "timestamp": "2025-11-01T18:17:14.375980"
+    }
+  ],
+  "success": true,
+  "total_steps": 4,
+  "dataset_dir": "dataset/notion_create_page_20251101_181609",
+  "finished_at": "2025-11-01T18:17:14.568479"
+}

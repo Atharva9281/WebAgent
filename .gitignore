@@ -58,11 +58,6 @@ temp/
 # Authentication profiles and sessions
 auth/
 
-# Dataset (optional - remove if you want to commit screenshots)
-dataset/*/
-!dataset/README.md
-!dataset/.gitkeep
-
 # Browser data
 browser_data/
 

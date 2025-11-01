@@ -1,0 +1,13 @@
+{
+  "task_id": "notion_create_page",
+  "task_name": "Create Page in Notion",
+  "app": "notion",
+  "goal": "Create a new page titled 'Agent Test Page' with some content",
+  "start_url": "https://www.notion.so",
+  "started_at": "2025-11-01T18:06:06.674312",
+  "steps": [],
+  "success": false,
+  "total_steps": 0,
+  "error": "invalid state",
+  "finished_at": "2025-11-01T18:06:26.026467"
+}
