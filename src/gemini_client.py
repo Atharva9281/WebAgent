@@ -35,7 +35,8 @@ class GeminiClient:
         screenshot_b64: str,
         bboxes: List[Dict],
         current_url: str,
-        action_history: List[Dict]
+        action_history: List[Dict],
+        task_parameters: Dict = None
     ) -> Dict:
         """
         Ask Gemini to decide the next action
@@ -46,6 +47,7 @@ class GeminiClient:
             bboxes: List of annotated elements from mark_page.js
             current_url: Current page URL
             action_history: Previous actions taken
+            task_parameters: Extracted parameters from query (e.g., project_name)
             
         Returns:
             Structured action dictionary
@@ -58,7 +60,7 @@ class GeminiClient:
             history_text = self._format_history(action_history)
             
             # Build comprehensive prompt
-            prompt = self._build_prompt(goal, current_url, elements_text, history_text)
+            prompt = self._build_prompt(goal, current_url, elements_text, history_text, task_parameters)
             
             # Call Gemini with vision
             response = self.model.generate_content([
@@ -102,8 +104,16 @@ class GeminiClient:
             for h in action_history[-5:]  # Last 5 actions
         ])
     
-    def _build_prompt(self, goal: str, current_url: str, elements_text: str, history_text: str) -> str:
+    def _build_prompt(self, goal: str, current_url: str, elements_text: str, history_text: str, task_parameters: Dict = None) -> str:
         """Build the comprehensive prompt for Gemini"""
+        
+        # Build parameters section
+        parameters_text = ""
+        if task_parameters:
+            parameters_text = "\n\nTASK PARAMETERS (use these specific values):\n"
+            for key, value in task_parameters.items():
+                parameters_text += f"  - {key}: {value}\n"
+        
         return f"""You are a web automation agent. Your goal: {goal}
 
 Current URL: {current_url}
@@ -114,7 +124,7 @@ Available interactive elements:
 {elements_text}
 
 Previous actions:
-{history_text}
+{history_text}{parameters_text}
 
 Choose ONE action from:
 1. click [number] - Click an element by its number
@@ -126,6 +136,7 @@ Choose ONE action from:
 CRITICAL RULES:
 - Output EXACTLY in this format: ACTION: <action>
 - Use the EXACT number from the list above
+- If parameters specify a NAME, USE THAT EXACT NAME when typing
 - Choose the action that makes progress toward the goal
 - Be VERY careful with element selection - read the text carefully
 - If you see a modal/form, interact with it
@@ -135,7 +146,7 @@ CRITICAL RULES:
 
 Examples:
 - ACTION: click [5]
-- ACTION: type [12]; AI Agent Demo Project
+- ACTION: type [12]; Trial Project
 - ACTION: scroll down
 - ACTION: finish; Successfully created project
 
