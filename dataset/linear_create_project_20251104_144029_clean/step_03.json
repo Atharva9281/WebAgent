@@ -1,0 +1,216 @@
+{
+  "step": 3,
+  "url": "https://linear.app/trialagent/projects/all",
+  "screenshot": "step_03.png",
+  "action": {
+    "action": "type",
+    "raw_response": "```tool_code\nACTION: type [50]; fixing chrome\n```",
+    "reasoning": "",
+    "element_id": 50,
+    "text": "fixing chrome",
+    "element_text": "AI Agent Project\nNo updates\n0%"
+  },
+  "observation": "Typed into [50]: 'fixing chrome'",
+  "ui_state": {
+    "url": "https://linear.app/trialagent/projects/all",
+    "title": "Projects",
+    "modals": [
+      {
+        "type": "dialog",
+        "title": "",
+        "visible": true
+      },
+      {
+        "type": "modal",
+        "selector": "[aria-modal=\"true\"]",
+        "visible": true
+      }
+    ],
+    "forms": [
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      },
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      },
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      },
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      },
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      },
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      },
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      },
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      },
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      },
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      },
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      },
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      },
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      },
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      },
+      {
+        "type": "input",
+        "input_type": "checkbox",
+        "name": "",
+        "placeholder": "",
+        "id": "",
+        "aria_label": "",
+        "value": "on",
+        "filled": true
+      }
+    ],
+    "dropdowns": [
+      {
+        "type": "expanded",
+        "aria_label": "",
+        "visible": true
+      },
+      {
+        "type": "expanded",
+        "aria_label": "",
+        "visible": true
+      },
+      {
+        "type": "expanded",
+        "aria_label": "",
+        "visible": true
+      },
+      {
+        "type": "expanded",
+        "aria_label": "",
+        "visible": true
+      }
+    ],
+    "loading": {
+      "is_loading": true,
+      "indicators": [
+        "[class*=\"loading\"]"
+      ]
+    },
+    "page_hash": "4089c6a18210f894e0fc8557a71258ed"
+  },
+  "description": "Page: https://linear.app/trialagent/projects/all | 2 modals/dialogs open | 15 form field(s) filled | 4 dropdown(s) open | Page is loading...",
+  "timestamp": "2025-11-04T14:40:59.279070",
+  "screenshot_type": "clean_user_view",
+  "annotation_method": "PIL_image_processing",
+  "user_experience": "clean_no_visual_interference"
+}

@@ -9,6 +9,8 @@ Handles all AI-related operations:
 """
 
 from typing import Dict, List
+from datetime import datetime
+import json
 import google.generativeai as genai
 
 
@@ -36,7 +38,8 @@ class GeminiClient:
         bboxes: List[Dict],
         current_url: str,
         action_history: List[Dict],
-        task_parameters: Dict = None
+        task_parameters: Dict = None,
+        hint: Dict = None
     ) -> Dict:
         """
         Ask Gemini to decide the next action
@@ -55,12 +58,19 @@ class GeminiClient:
         try:
             # Format element list for Gemini with better context
             elements_text = self._format_elements(bboxes)
-            
+
             # Format action history
             history_text = self._format_history(action_history)
             
             # Build comprehensive prompt
-            prompt = self._build_prompt(goal, current_url, elements_text, history_text, task_parameters)
+            prompt = self._build_prompt(
+                goal,
+                current_url,
+                elements_text,
+                history_text,
+                task_parameters,
+                hint
+            )
             
             # Call Gemini with vision
             response = self.model.generate_content([
@@ -74,7 +84,12 @@ class GeminiClient:
             response_text = response.text.strip()
             
             # Parse and return structured action
-            return self._parse_action_response(response_text)
+            parsed_action = self._parse_action_response(response_text)
+
+            if parsed_action.get('action') == 'finish':
+                self._log_early_finish(response_text, current_url, action_history)
+
+            return parsed_action
             
         except Exception as e:
             print(f"⚠️  Gemini API error: {e}")
@@ -87,33 +102,105 @@ class GeminiClient:
     
     def _format_elements(self, bboxes: List[Dict]) -> str:
         """Format element list for Gemini with enhanced context"""
-        return "\n".join([
-            f"[{bbox['index']}] {bbox['type']}: \"{bbox['text'][:50].strip()}\" {bbox.get('ariaLabel', '').strip()}" + 
-            (f" (href: {bbox['href'][:30]})" if bbox.get('href') else "") +
-            (f" (role: {bbox['role']})" if bbox.get('role') else "")
-            for bbox in bboxes[:30]  # Limit to 30 to avoid token overflow
-        ])
-    
+        if not bboxes:
+            return "No interactive elements detected."
+
+        lines = []
+        for bbox in bboxes[:40]:
+            text = (bbox.get("text", "") or "").strip()
+            aria = (bbox.get("ariaLabel", "") or "").strip()
+            role = bbox.get("role") or ""
+            href = bbox.get("href") or ""
+
+            snippet = f"[{bbox['index']}] {bbox['type']}: \"{text[:50]}\""
+            if aria:
+                snippet += f" (aria: {aria[:40]})"
+            if role:
+                snippet += f" (role: {role})"
+            if href:
+                snippet += f" (href: {href[:60]})"
+            lines.append(snippet)
+
+        return "\n".join(lines)
+
     def _format_history(self, action_history: List[Dict]) -> str:
-        """Format action history for context"""
+        """Format action history for context with loop-awareness"""
         if not action_history:
-            return "None (first step)"
-        
-        return "\n".join([
-            f"Step {h['step']}: {h['action']} - {h['observation']}"
-            for h in action_history[-5:]  # Last 5 actions
-        ])
-    
-    def _build_prompt(self, goal: str, current_url: str, elements_text: str, history_text: str, task_parameters: Dict = None) -> str:
+            return "RECENT ACTIONS: None (first step)\n"
+
+        lines = ["RECENT ACTIONS (what you just did):"]
+        for entry in action_history[-5:]:
+            step = entry.get("step")
+            action = entry.get("action", "unknown")
+            observation = entry.get("observation", "")
+
+            detail = ""
+            if "Typed" in observation:
+                parts = observation.split("'")
+                typed = parts[1] if len(parts) > 1 else ""
+                detail = f"typed \"{typed}\""
+            elif "Clicked" in observation:
+                parts = observation.split(": ")
+                clicked = parts[1] if len(parts) > 1 else observation
+                detail = f"clicked \"{clicked[:50]}\""
+            elif observation:
+                detail = observation[:60]
+
+            if detail:
+                lines.append(f"  Step {step}: {action} - {detail}")
+            else:
+                lines.append(f"  Step {step}: {action}")
+
+        return "\n".join(lines) + "\n"
+
+    def _build_prompt(
+        self,
+        goal: str,
+        current_url: str,
+        elements_text: str,
+        history_text: str,
+        task_parameters: Dict = None,
+        hint: Dict = None
+    ) -> str:
         """Build the comprehensive prompt for Gemini"""
         
         # Build parameters section
         parameters_text = ""
         if task_parameters:
-            parameters_text = "\n\nTASK PARAMETERS (use these specific values):\n"
+            parameters_text = "\n\n🎯 TASK PARAMETERS (use these exact values):\n"
+            guidance_lines = []
             for key, value in task_parameters.items():
-                parameters_text += f"  - {key}: {value}\n"
-        
+                if value is None or value == "":
+                    continue
+                if isinstance(value, list):
+                    display_value = ", ".join(str(v) for v in value)
+                else:
+                    display_value = value
+                parameters_text += f"  - {key}: {display_value}\n"
+            
+            # Provide explicit instructions for known structured parameters
+            param_lower = {k: (v.lower() if isinstance(v, str) else v) for k, v in task_parameters.items()}
+            if "project_name" in task_parameters:
+                guidance_lines.append(f"Type the project name field with exactly \"{task_parameters['project_name']}\" before saving.")
+                guidance_lines.append("After the creation modal is open, stay inside it (look for 'New project') and avoid clicking the main 'Add project' button again.")
+            if "status" in param_lower:
+                guidance_lines.append("Inside the modal, click the button showing the current status/backlog (e.g., \"Backlog\", \"In Progress\") and choose the requested status.")
+            if "priority" in param_lower:
+                guidance_lines.append("Set the priority dropdown to the requested value.")
+            if "target_date" in task_parameters:
+                guidance_lines.append("Click the date/target control in the modal and set it to the specified date using the picker.")
+            if "assignee" in param_lower:
+                guidance_lines.append("Assign the item to the specified person if an assignee field is available.")
+            
+            if guidance_lines:
+                parameters_text += "\nTASK-SPECIFIC INSTRUCTIONS:\n"
+                for line in guidance_lines:
+                    parameters_text += f"  - {line}\n"
+
+        hint_text = ""
+        if hint and hint.get("message"):
+            hint_text = f"\n💡 CONTEXT HINT:\n  - {hint['message']}\n"
+
         return f"""You are a web automation agent. Your goal: {goal}
 
 Current URL: {current_url}
@@ -124,33 +211,44 @@ Available interactive elements:
 {elements_text}
 
 Previous actions:
-{history_text}{parameters_text}
+{history_text}{parameters_text}{hint_text}
 
-Choose ONE action from:
-1. click [number] - Click an element by its number
-2. type [number]; [text] - Type text into an input field
+🚨 CRITICAL RULES TO PREVENT LOOPS:
+1. DON'T REPEAT YOURSELF
+   - If history shows you already typed a value, do NOT type it again.
+   - If a field already displays text, move on.
+2. NEVER CLICK CANCEL (unless the task explicitly asks).
+3. COMPLETE FORMS PROPERLY
+   - In a modal, fill required fields, then immediately click Create/Submit/Save.
+   - Optional controls (icons, colors) are secondary.
+4. MODAL AWARENESS
+   - Once a modal is open, stay inside it until you submit it.
+   - Do NOT reopen the same modal unless it closed unexpectedly.
+5. DETERMINE COMPLETION
+   - If the modal closes after submission and the list updates, call finish with a short summary.
+
+AVAILABLE ACTIONS:
+1. click [number] - Click the element with that number
+2. type [number]; [text] - Type text (use the exact parameter values)
 3. scroll down/up - Scroll the page
-4. wait - Wait 3 seconds for page to load
+4. wait - Wait 3 seconds
 5. finish; [summary] - Task is complete
 
-CRITICAL RULES:
-- Output EXACTLY in this format: ACTION: <action>
-- Use the EXACT number from the list above
-- If parameters specify a NAME, USE THAT EXACT NAME when typing
-- Choose the action that makes progress toward the goal
-- Be VERY careful with element selection - read the text carefully
-- If you see a modal/form, interact with it
-- ONLY use "finish" if you have ACTUALLY completed the goal - not just made progress
-- For filtering tasks: you must actually apply a filter, not just view existing content
-- Double-check that your action directly helps achieve the specific goal
+DECISION PROCESS (follow carefully):
+1. Review RECENT ACTIONS to see what you just did.
+2. Inspect the screenshot to confirm what changed.
+3. If required fields are filled and there is a submit button, click it.
+4. If a required field is empty, fill it once.
+5. If the goal is met, respond with finish; <summary>.
+6. Otherwise choose the best next step without repeating work.
+
+Output format (single line):
+ACTION: <action>
 
 Examples:
-- ACTION: click [5]
-- ACTION: type [12]; Trial Project
-- ACTION: scroll down
-- ACTION: finish; Successfully created project
-
-Your response (one line only):"""
+- ACTION: click [56]
+- ACTION: type [12]; second task
+- ACTION: finish; Created project and updated status"""
     
     def _parse_action_response(self, response_text: str) -> Dict:
         """
@@ -201,8 +299,57 @@ Your response (one line only):"""
             result.update(self._parse_scroll_action(action_line))
         elif action_type == "finish":
             result.update(self._parse_finish_action(parts))
-        
+        else:
+            # Handle cases where Gemini returns JSON-like shorthand such as {"answer":"finish"}
+            normalized = action_type.strip()
+            lowered = normalized.lower()
+            if "answer" in lowered:
+                if "finish" in lowered:
+                    result["action"] = "finish"
+                    result.update(self._parse_finish_action(parts))
+                elif "wait" in lowered:
+                    result["action"] = "wait"
+                elif "click" in lowered:
+                    result["action"] = "click"
+                    result.update(self._parse_click_action(main_part))
+                elif "type" in lowered:
+                    result["action"] = "type"
+                    result.update(self._parse_type_action(main_part, parts))
+                else:
+                    result["action"] = "wait"
+            elif normalized in {"wait", "finish", "click", "type", "scroll"}:
+                result["action"] = normalized
+                if normalized == "finish":
+                    result.update(self._parse_finish_action(parts))
+                elif normalized == "click":
+                    result.update(self._parse_click_action(main_part))
+                elif normalized == "type":
+                    result.update(self._parse_type_action(main_part, parts))
+                elif normalized == "scroll":
+                    result.update(self._parse_scroll_action(action_line))
+            else:
+                result["action"] = "wait"
+                result["reasoning"] = "Unrecognized action payload, defaulting to wait"
+
         return result
+
+    def _log_early_finish(self, response_text: str, current_url: str, action_history: List[Dict]):
+        """Log Gemini finish recommendations for debugging early exits."""
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "step": action_history[-1]['step'] if action_history else 0,
+            "url": current_url,
+            "response_excerpt": response_text[:400]
+        }
+
+        try:
+            with open("debug_early_finish.log", "a") as logfile:
+                logfile.write(json.dumps(entry))
+                logfile.write("\n" + "-" * 80 + "\n")
+        except Exception:
+            pass
+
+        print(f"📝 Logged early finish attempt (step {entry['step']})")
     
     def _parse_click_action(self, main_part: str) -> Dict:
         """Parse click action to extract element ID"""

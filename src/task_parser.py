@@ -14,7 +14,7 @@ This makes Agent B truly generalizable - it doesn't need hardcoded tasks.
 """
 
 import re
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import google.generativeai as genai
 from dotenv import load_dotenv
 import os
@@ -89,10 +89,17 @@ class TaskParser:
         
         # Use Gemini to parse the query intent
         task_intent = self._parse_intent_with_gemini(query, app_info['name'])
-        
+
         if not task_intent:
             print("❌ Could not parse task intent")
             return None
+
+        # Augment with heuristic extraction to ensure parameters are captured
+        task_intent = self._augment_intent_with_heuristics(
+            task_intent=task_intent,
+            query=query,
+            app=app_info['name']
+        )
         
         print(f"✅ Parsed intent:")
         print(f"   Goal: {task_intent['goal']}")
@@ -111,7 +118,11 @@ class TaskParser:
             "max_steps": 20,
             "success_criteria": task_intent['success_criteria'],
             "captures_non_url_states": True,
-            "parsed_from_query": query
+            "parsed_from_query": query,
+            "parameters": dict(task_intent.get('parameters', {})),
+            "is_multi_task": task_intent.get('is_multi_task', False),
+            "action": task_intent['action'],
+            "object": task_intent['object']
         }
         
         print(f"\n✅ Task configuration generated:")
@@ -262,6 +273,187 @@ Examples:
             
             # Fallback: basic parsing
             return self._fallback_parse(query, app)
+
+
+    def _augment_intent_with_heuristics(self, task_intent: Dict, query: str, app: str) -> Dict:
+        """
+        Combine LLM intent with heuristic extraction to ensure parameters are captured.
+        
+        Args:
+            task_intent: Intent parsed by Gemini (may be missing parameters)
+            query: Original natural language query
+            app: Target application name
+        
+        Returns:
+            Augmented intent dictionary
+        """
+        # Ensure required keys exist
+        task_intent.setdefault("parameters", {})
+        task_intent.setdefault("is_multi_task", False)
+        
+        # Use fallback parser to extract structured parameters
+        heuristic_intent = self._fallback_parse(query, app)
+        if not heuristic_intent:
+            return task_intent
+        
+        heuristic_params = heuristic_intent.get("parameters", {}) or {}
+        params = task_intent.get("parameters", {}) or {}
+        
+        # Merge individual name parameters if missing
+        for key in ["project_name", "page_name", "database_name", "issue_title", "name", "name_pattern"]:
+            if key not in params and heuristic_params.get(key):
+                params[key] = heuristic_params[key]
+        
+        instruction_keywords = {"change", "set", "update", "switch", "make", "turn"}
+
+        # Merge explicit lists of names
+        if heuristic_params.get("names"):
+            if not params.get("names"):
+                params["names"] = heuristic_params["names"]
+            else:
+                # Ensure uniqueness while preserving order
+                existing = params["names"]
+                for name in heuristic_params["names"]:
+                    if name not in existing:
+                        existing.append(name)
+                params["names"] = existing
+        
+        # Clean name lists to remove instruction-like entries
+        if params.get("names"):
+            cleaned_names = []
+            for name in params["names"]:
+                lower_name = name.lower().strip()
+                if any(lower_name.startswith(k) for k in instruction_keywords):
+                    continue
+                cleaned_names.append(name)
+            if cleaned_names:
+                params["names"] = cleaned_names
+            else:
+                params.pop("names", None)
+                params.pop("count", None)
+        
+        # Merge counts
+        if "count" not in params and heuristic_params.get("count"):
+            params["count"] = heuristic_params["count"]
+        
+        # If we have names but no count, infer it
+        if params.get("names") and not params.get("count"):
+            params["count"] = len(params["names"])
+        
+        # Determine multi-task flag
+        is_multi = task_intent.get("is_multi_task", False)
+        if params.get("names"):
+            is_multi = len(params["names"]) > 1
+            if not is_multi:
+                params.pop("names", None)
+        if params.get("count", 1) > 1:
+            is_multi = True
+        if heuristic_intent.get("is_multi_task"):
+            is_multi = True
+        if not params.get("names") and params.get("count", 1) <= 1:
+            params.pop("count", None)
+        task_intent["is_multi_task"] = is_multi
+        
+        # Merge additional structured parameters (status, dates, etc.)
+        additional_params = self._extract_additional_parameters(query)
+        for key, value in additional_params.items():
+            if key not in params:
+                params[key] = value
+        
+        # Normalize synonymous fields
+        if "status" not in params and "progress" in params:
+            progress_val = params.pop("progress")
+            params["status"] = self._normalize_status_value(progress_val) if isinstance(progress_val, str) else progress_val
+        if "backlog_progress" in params:
+            backlog_val = params.pop("backlog_progress")
+            params["status"] = self._normalize_status_value(backlog_val)
+        if "backlog_modal" in params:
+            backlog_val = params.pop("backlog_modal")
+            params["status"] = self._normalize_status_value(backlog_val)
+        if "status" in params and isinstance(params["status"], str):
+            params["status"] = self._normalize_status_value(params["status"])
+        if "target_date" in params and isinstance(params["target_date"], str):
+            params["target_date"] = params["target_date"].strip().rstrip(".")
+
+        # Persist merged parameters
+        task_intent["parameters"] = params
+        
+        return task_intent
+
+    def _normalize_status_value(self, value: str) -> str:
+        """Normalize status/progress strings into a user-facing label."""
+        import re
+
+        clean = str(value).strip()
+        clean = clean.replace('-', ' ').replace('_', ' ')
+        clean = re.sub(r'\s+', ' ', clean)
+        mapping = {
+            "inprogress": "In Progress",
+            "in progress": "In Progress",
+            "progress": "In Progress",
+            "in-progress": "In Progress",
+            "backlog": "Backlog",
+            "todo": "Todo",
+        }
+        lower = clean.lower()
+        if lower in mapping:
+            return mapping[lower]
+        return clean.title()
+
+    def _extract_additional_parameters(self, query: str) -> Dict:
+        """
+        Extract structured fields from query text (status, dates, priority, etc.).
+        """
+        import re
+        params: Dict[str, str] = {}
+        
+        # Status / workflow field changes
+        status_patterns = [
+            r'(?:status|backlog|workflow)[^a-zA-Z0-9]+(?:modal\s+)?(?:to|as|set to)\s+([a-zA-Z ]+?)(?:,| and|$)',
+            r'(?:change|move|set)\s+(?:the\s+)?(?:status|backlog|workflow)[^a-zA-Z0-9]+to\s+([a-zA-Z ]+?)(?:,| and|$)'
+        ]
+        for pattern in status_patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                status_raw = match.group(1).strip()
+                params["status"] = self._normalize_status_value(status_raw)
+                break
+
+        # Additional backlog/progress phrasing
+        if "status" not in params:
+            match = re.search(
+                r'backlog(?:\s+progress)?(?:\s+modal)?\s+(?:to|as|set to)\s+([a-zA-Z ]+?)(?:,| and|$)',
+                query,
+                re.IGNORECASE,
+            )
+            if match:
+                status_raw = match.group(1).strip()
+                params["status"] = self._normalize_status_value(status_raw)
+
+        # Target/Due date extraction
+        target_patterns = [
+            r'target date\s+(?:to\s+)?([a-zA-Z0-9 ,]+?)(?:,| and|$)',
+            r'target\s+(?:to\s+)?([a-zA-Z0-9 ,]+?)(?:,| and|$)',
+            r'(?:due date|deadline)\s+(?:to\s+)?([a-zA-Z0-9 ,]+?)(?:,| and|$)'
+        ]
+        for pattern in target_patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                target_raw = match.group(1).strip().rstrip('.')
+                params["target_date"] = target_raw.title()
+                break
+        
+        # Priority changes
+        priority_patterns = [
+            r'(?:set|change)\s+(?:the\s+)?priority\s+(?:to\s+)?([a-zA-Z ]+?)(?:,| and|$)'
+        ]
+        for pattern in priority_patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                params["priority"] = match.group(1).strip().title()
+                break
+        
+        return params
     
     
     def _fallback_parse(self, query: str, app: str) -> Dict:
@@ -305,6 +497,7 @@ Examples:
         import re
         parameters = {}
         is_multi_task = False
+        instruction_keywords = {"change", "set", "update", "switch", "make", "turn"}
         
         # Check for quantity patterns (multi-task detection)
         quantity_patterns = [
@@ -335,26 +528,71 @@ Examples:
             match = re.search(pattern, query, re.IGNORECASE)
             if match:
                 extracted_text = match.group(1).strip()
-                
-                # Check if it's a series (contains commas or "and")
-                if ',' in extracted_text or ' and ' in extracted_text:
-                    # Split series: "assignment 1, 2, 3" or "A and B and C"
-                    parts = re.split(r'[,\s]+and\s+|,\s*', extracted_text)
-                    extracted_names = [part.strip() for part in parts if part.strip()]
-                    if len(extracted_names) > 1:
-                        is_multi_task = True
-                        parameters["names"] = extracted_names
-                        parameters["count"] = len(extracted_names)
+
+                # Helper to split when instruction keyword appears
+                def split_instruction(text: str):
+                    lower = text.lower()
+                    for kw in instruction_keywords:
+                        idx = lower.find(kw + " ")
+                        if idx != -1:
+                            return text[:idx].strip(), text[idx:].strip()
+                    return text.strip(), ""
+
+                # If there's an " and " that likely separates instructions, split once
+                if " and " in extracted_text.lower():
+                    split_parts = re.split(r'\s+and\s+', extracted_text, maxsplit=1, flags=re.IGNORECASE)
+                    name_candidate = split_parts[0].strip()
+                    instruction_tail = split_parts[1].strip() if len(split_parts) > 1 else ""
                 else:
-                    # Single name
-                    if obj == "project":
-                        parameters["project_name"] = extracted_text
-                    elif obj == "page":
-                        parameters["page_name"] = extracted_text
-                    elif obj == "database":
-                        parameters["database_name"] = extracted_text
-                    elif obj == "issue":
-                        parameters["issue_title"] = extracted_text
+                    name_candidate = extracted_text
+                    instruction_tail = ""
+
+                # Remove instruction phrases embedded in the candidate
+                name_candidate, embedded_tail = split_instruction(name_candidate)
+                if embedded_tail:
+                    instruction_tail = f"{embedded_tail} {'and ' + instruction_tail if instruction_tail else ''}".strip()
+
+                # Check if it's a series (contains commas OR multiple distinct parts)
+                if ',' in name_candidate:
+                    parts = [part.strip() for part in name_candidate.split(',') if part.strip()]
+                else:
+                    parts = [name_candidate]
+                
+                # Filter out parts that look like instructions ("change", "set", etc.)
+                cleaned_parts = []
+                for part in parts:
+                    part_lower = part.lower()
+                    if any(part_lower.startswith(k) for k in instruction_keywords):
+                        instruction_tail = f"{part} {'and ' + instruction_tail if instruction_tail else ''}".strip()
+                        continue
+                    cleaned_parts.append(part)
+                
+                if cleaned_parts:
+                    if len(cleaned_parts) > 1:
+                        is_multi_task = True
+                        extracted_names = cleaned_parts
+                        parameters["names"] = cleaned_parts
+                        parameters["count"] = len(cleaned_parts)
+                    else:
+                        single_name = cleaned_parts[0].strip().strip(" '\"")
+                        normalized_name = single_name
+                        if obj == "project":
+                            parameters["project_name"] = normalized_name
+                        elif obj == "page":
+                            parameters["page_name"] = normalized_name
+                        elif obj == "database":
+                            parameters["database_name"] = normalized_name
+                        elif obj == "issue":
+                            parameters["issue_title"] = normalized_name
+                        else:
+                            parameters["name"] = normalized_name
+                else:
+                    # No valid names extracted; ensure multi-task isn't set just from instructions
+                    is_multi_task = False
+
+                # Append any instruction tail back into query for further processing
+                if instruction_tail:
+                    query = query + " " + instruction_tail
                 break
         
         # If we detected count but no names, generate pattern
@@ -366,6 +604,12 @@ Examples:
                 parameters["names"] = [f"{base_name} {i}" for i in range(1, count + 1)]
                 parameters["name_pattern"] = f"{base_name} {{i}}"
         
+        # Extract additional parameters like status or dates
+        additional_params = self._extract_additional_parameters(query)
+        for key, value in additional_params.items():
+            if value:
+                parameters[key] = value
+
         # Build goal and description
         if is_multi_task:
             goal = f"{action.title()} {count} {obj}s in {app}"

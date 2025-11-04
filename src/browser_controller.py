@@ -101,7 +101,17 @@ class BrowserController:
                     viewport={'width': 1920, 'height': 1080}
                 )
             
-            self.page = self.context.new_page()
+            existing_pages = self.context.pages
+            if existing_pages:
+                self.page = existing_pages[0]
+            else:
+                self.page = self.context.new_page()
+            for extra in list(self.context.pages):
+                if extra != self.page:
+                    try:
+                        extra.close()
+                    except Exception:
+                        pass
             return True
             
         except Exception as e:
