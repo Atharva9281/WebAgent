@@ -84,6 +84,7 @@ class AgentBase(ABC):
         self.task_parser = TaskParser(gemini_api_key=gemini_api_key)
         self.action_history: List[Dict] = []
         self.subgoal_manager: Optional[SubGoalManager] = None
+        self.previous_step_state: Optional[Dict] = None
 
         self._print_initialisation_summary()
 
@@ -119,6 +120,7 @@ class AgentBase(ABC):
 
         self.action_history = []
         self.subgoal_manager = SubGoalManager(task_config)
+        self.previous_step_state = None
 
         if not self.browser.setup_browser(task_config):
             return {"success": False, "error": "Browser setup failed"}
@@ -160,6 +162,7 @@ class AgentBase(ABC):
 
         self.action_history = []
         self.subgoal_manager = SubGoalManager(task_config)
+        self.previous_step_state = None
 
         if not self.browser.setup_browser(task_config):
             return {"success": False, "error": "Browser setup failed"}
@@ -305,6 +308,7 @@ class AgentBase(ABC):
         ui_state = get_complete_ui_state(self.browser.page)
         description = describe_ui_state(ui_state)
         print(f"   {description}")
+        transition = self._build_transition_metadata(step_num, ui_state)
 
         if self.subgoal_manager:
             self.subgoal_manager.update(ui_state, annotation_result["bboxes"])
@@ -327,6 +331,8 @@ class AgentBase(ABC):
             task_parameters=task_config.get("parameters", {}),
             hint=combined_hint,
         )
+
+        self._enrich_action_details(action, annotation_result["bboxes"])
 
         if self.subgoal_manager:
             blocked_reason = self.subgoal_manager.block_finish_reason(action, ui_state)
@@ -354,6 +360,7 @@ class AgentBase(ABC):
                     screenshot_filename,
                     dataset_dir,
                     metadata,
+                    transition,
                 )
                 return "completed"
 
@@ -375,6 +382,7 @@ class AgentBase(ABC):
             screenshot_filename,
             dataset_dir,
             metadata,
+            transition,
         )
 
         if self.subgoal_manager:
@@ -396,6 +404,66 @@ class AgentBase(ABC):
         """Optional hook for subclasses to add logging after executing."""
         if self.STEP_POST_OBSERVATION_LABEL:
             print(self.STEP_POST_OBSERVATION_LABEL)
+
+    def _enrich_action_details(self, action: Dict, bboxes: List[Dict]) -> None:
+        """Attach contextual element metadata to the action payload."""
+        if not action or action.get("element_id") is None:
+            return
+
+        try:
+            element_id = int(action.get("element_id"))
+        except (TypeError, ValueError):
+            return
+
+        bbox = next((box for box in bboxes if box.get("index") == element_id), None)
+        if not bbox:
+            return
+
+        text = (bbox.get("text") or "").strip()
+        action["element_text"] = text
+        action["element_type"] = bbox.get("type", "")
+        action["bbox"] = [
+            bbox.get("x"),
+            bbox.get("y"),
+            bbox.get("width"),
+            bbox.get("height"),
+        ]
+        action["element_details"] = {
+            "text": text,
+            "type": bbox.get("type", ""),
+            "aria_label": bbox.get("ariaLabel", ""),
+            "role": bbox.get("role", ""),
+            "href": bbox.get("href", ""),
+            "id": bbox.get("id", ""),
+            "class_name": bbox.get("className", ""),
+        }
+
+    def _build_transition_metadata(self, step_num: int, ui_state: Dict) -> Dict:
+        """Compare current state to previous step for change tracking."""
+        previous = self.previous_step_state or {}
+        current_url = ui_state.get("url", "") if ui_state else ""
+        current_hash = ui_state.get("page_hash", "") if ui_state else ""
+
+        transition = {
+            "previous_step": previous.get("step"),
+            "previous_url": previous.get("url", ""),
+            "previous_page_hash": previous.get("page_hash", ""),
+            "current_step": step_num,
+            "current_url": current_url,
+            "current_page_hash": current_hash,
+            "url_changed": False,
+            "dom_changed": False,
+        }
+
+        if previous:
+            transition["url_changed"] = transition["previous_url"] != current_url
+            prev_hash = previous.get("page_hash", "")
+            if prev_hash and current_hash:
+                transition["dom_changed"] = prev_hash != current_hash
+            else:
+                transition["dom_changed"] = bool(prev_hash or current_hash)
+
+        return transition
 
     def _build_submit_hint(self, ui_state: Dict, bboxes: List[Dict]) -> Optional[Dict]:
         """Detect primary submit button when a modal with filled fields is open."""
@@ -439,6 +507,7 @@ class AgentBase(ABC):
         screenshot_filename: str,
         dataset_dir: Path,
         metadata: Dict,
+        transition: Optional[Dict] = None,
     ) -> None:
         """Persist metadata for a single step."""
         step_metadata = {
@@ -451,6 +520,8 @@ class AgentBase(ABC):
             "description": description,
             "timestamp": datetime.now().isoformat(),
         }
+        if transition:
+            step_metadata["transition"] = transition
         if self.STEP_METADATA_EXTRA:
             step_metadata.update(self.STEP_METADATA_EXTRA)
 
@@ -458,6 +529,12 @@ class AgentBase(ABC):
         step_json_path = dataset_dir / f"step_{step_num:02d}.json"
         with open(step_json_path, "w") as handle:
             json.dump(step_metadata, handle, indent=2)
+
+        self.previous_step_state = {
+            "step": step_num,
+            "url": ui_state.get("url", "") if ui_state else "",
+            "page_hash": ui_state.get("page_hash", "") if ui_state else "",
+        }
 
     def _save_error_screenshot(self, dataset_dir: Path, step_num: int) -> None:
         """Capture a screenshot when a step throws."""

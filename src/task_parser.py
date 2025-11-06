@@ -100,6 +100,13 @@ class TaskParser:
             query=query,
             app=app_info['name']
         )
+
+        # Reconcile intent so project-centric queries stay in project workflow
+        task_intent = self._enforce_project_intent(
+            task_intent=task_intent,
+            query=query,
+            app=app_info['name']
+        )
         
         print(f"✅ Parsed intent:")
         print(f"   Goal: {task_intent['goal']}")
@@ -379,6 +386,67 @@ Examples:
         task_intent["parameters"] = params
         
         return task_intent
+       
+
+    def _enforce_project_intent(self, task_intent: Dict, query: str, app: str) -> Dict:
+        """
+        Ensure queries explicitly mentioning projects stay in the project workflow.
+        This guards against LLM intent drift when extra instructions (status, priority)
+        are included in the same sentence.
+        """
+        query_lower = query.lower()
+        mentions_project = "project" in query_lower or "projects" in query_lower
+        if not mentions_project:
+            return task_intent
+
+        create_keywords = ["create", "add", "new", "make"]
+        should_create = any(keyword in query_lower for keyword in create_keywords)
+
+        # Force object/action to project/create when appropriate
+        task_intent["object"] = "project"
+        if should_create:
+            task_intent["action"] = "create"
+
+        params = task_intent.setdefault("parameters", {})
+        project_name = (
+            params.get("project_name")
+            or params.get("name")
+            or params.get("title")
+        )
+
+        # Normalise goal/task naming so downstream components stay aligned
+        query_lower = query.lower()
+
+        if should_create:
+            if not project_name:
+                # Try quick heuristic extraction if Gemini missed it
+                extracted = self._fallback_parse(query, app)
+                if extracted and extracted.get("parameters", {}).get("project_name"):
+                    project_name = extracted["parameters"]["project_name"]
+                    params["project_name"] = project_name
+            if project_name:
+                pretty_name = project_name
+            else:
+                pretty_name = "new project"
+            task_intent["goal"] = f"Create a new project named '{pretty_name}' in {app}"
+            task_intent["task_name"] = f"Create Project in {app.title()}"
+            task_intent["description"] = (
+                f"Navigate to {app} and create a new project named '{pretty_name}'."
+            )
+            task_intent["success_criteria"] = [
+                f"Project named '{pretty_name}' appears in the project list",
+                "Creation modal is submitted successfully"
+            ]
+        else:
+            task_intent["goal"] = task_intent.get("goal") or f"Manage project in {app}"
+            task_intent["task_name"] = task_intent.get("task_name") or f"Project workflow in {app.title()}"
+
+        # Populate default description if requested but not captured earlier
+        if "description" not in params and "description" in query_lower:
+            project_label = project_name or "the project"
+            params["description"] = f"Automated description for {project_label}."
+
+        return task_intent
 
     def _normalize_status_value(self, value: str) -> str:
         """Normalize status/progress strings into a user-facing label."""
@@ -392,6 +460,7 @@ Examples:
             "in progress": "In Progress",
             "progress": "In Progress",
             "in-progress": "In Progress",
+            "inprogrss": "In Progress",
             "backlog": "Backlog",
             "todo": "Todo",
         }
@@ -399,6 +468,13 @@ Examples:
         if lower in mapping:
             return mapping[lower]
         return clean.title()
+
+    def _clean_value_phrase(self, text: str) -> str:
+        snippet = (text or "").strip()
+        if not snippet:
+            return snippet
+        snippet = re.split(r"\b(?:and|also|then|so|but)\b", snippet, maxsplit=1, flags=re.IGNORECASE)[0]
+        return snippet.strip()
 
     def _extract_additional_parameters(self, query: str) -> Dict:
         """
@@ -415,7 +491,7 @@ Examples:
         for pattern in status_patterns:
             match = re.search(pattern, query, re.IGNORECASE)
             if match:
-                status_raw = match.group(1).strip()
+                status_raw = self._clean_value_phrase(match.group(1))
                 params["status"] = self._normalize_status_value(status_raw)
                 break
 
@@ -427,7 +503,7 @@ Examples:
                 re.IGNORECASE,
             )
             if match:
-                status_raw = match.group(1).strip()
+                status_raw = self._clean_value_phrase(match.group(1))
                 params["status"] = self._normalize_status_value(status_raw)
 
         # Target/Due date extraction
@@ -439,7 +515,7 @@ Examples:
         for pattern in target_patterns:
             match = re.search(pattern, query, re.IGNORECASE)
             if match:
-                target_raw = match.group(1).strip().rstrip('.')
+                target_raw = self._clean_value_phrase(match.group(1)).rstrip('.')
                 params["target_date"] = target_raw.title()
                 break
         
@@ -450,7 +526,20 @@ Examples:
         for pattern in priority_patterns:
             match = re.search(pattern, query, re.IGNORECASE)
             if match:
-                params["priority"] = match.group(1).strip().title()
+                priority_raw = self._clean_value_phrase(match.group(1))
+                params["priority"] = priority_raw.title()
+                break
+
+        # Description instructions
+        description_patterns = [
+            r'(?:add|include|write|set|provide|generate)\s+(?:a\s+)?description(?:\s+for\s+(?:the\s+)?(?:project|it))?\s*(?:called|named|as|to|of)?\s*["\']([^"\']+)["\']',
+            r'description\s+(?:is|should be|to|as)\s+["\']([^"\']+)["\']',
+            r'description:\s*([^,\n]+)'
+        ]
+        for pattern in description_patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                params["description"] = self._clean_value_phrase(match.group(1)).rstrip(".")
                 break
         
         return params

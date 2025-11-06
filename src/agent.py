@@ -1,801 +1,106 @@
 """
-Agent B - Main Web Automation Agent (Modular Version)
+Agent B - Standard Web Automation Agent.
 
-Vision-enabled web automation agent that captures UI states
-(including non-URL states like modals and forms) while navigating
-Linear and Notion.
-
-This is the main orchestrator that coordinates:
-- BrowserController: Browser management and actions
-- GeminiClient: AI decision making  
-- StateDetector: UI state detection
-- Dataset generation: Screenshots + metadata
-
-Usage:
-    python src/agent.py
+This entrypoint now delegates the shared orchestration flow to AgentBase,
+keeping this file focused on CLI wiring and persona-specific logging.
 """
 
+from __future__ import annotations
+
+import argparse
 import os
 import sys
-import json
-import time
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, List
 
 from dotenv import load_dotenv
 
-# Import our modules
+from agent_base import AgentBase, list_predefined_tasks
+from agent_cli import (
+    handle_batch,
+    handle_query,
+    handle_task,
+    interactive_menu,
+    print_launch_banner,
+)
 from browser_controller import BrowserController
-from gemini_client import GeminiClient
-from state_detector import get_complete_ui_state, describe_ui_state
-from task_definitions import get_task_by_id, TASKS, list_all_tasks
-from task_parser import TaskParser
-
-# Load environment variables
-load_dotenv()
 
 
-class AgentB:
-    """
-    Main web automation agent orchestrator
-    """
-    
-    def __init__(self, gemini_api_key: str):
-        """
-        Initialize the agent with its components
-        
-        Args:
-            gemini_api_key: Gemini API key from environment
-        """
-        self.browser = BrowserController()
-        self.gemini = GeminiClient(gemini_api_key)
-        self.task_parser = TaskParser(gemini_api_key=gemini_api_key)
-        self.action_history = []
-        
-        print("✅ Agent B initialized")
-        print("   Components: BrowserController + GeminiClient + StateDetector")
-        print(f"   Task Parser: Ready")
-    
-    def handle_query(self, query: str) -> Dict:
-        """
-        Handle a natural language query from Agent A
-        
-        This is the main entry point for runtime task execution.
-        Agent A sends queries like: "How do I create a project in Linear?"
-        
-        Args:
-            query: Natural language query
-            
-        Returns:
-            Task execution metadata
-        """
-        print("\n" + "="*70)
-        print("🤖 AGENT B - HANDLING RUNTIME QUERY")
-        print("="*70)
-        print(f"Query from Agent A: {query}")
-        print("="*70 + "\n")
-        
-        # Parse natural language query into task configuration
-        task_config = self.task_parser.parse_query(query)
-        
-        if not task_config:
-            print("❌ Failed to parse query")
-            return {
-                "success": False,
-                "error": "Could not parse query",
-                "query": query
-            }
-        
-        # Validate task configuration
-        if not self.task_parser.validate_task_config(task_config):
-            print("❌ Invalid task configuration")
-            return {
-                "success": False,
-                "error": "Invalid task configuration",
-                "query": query
-            }
-        
-        # Check if this is a multi-task
-        if task_config.get('is_multi_task', False):
-            print(f"\n{'='*70}")
-            print(f"🔥 MULTI-TASK DETECTED")
-            print(f"{'='*70}")
-            print(f"Count: {task_config.get('parameters', {}).get('count', 1)}")
-            print(f"Names: {task_config.get('parameters', {}).get('names', [])}")
-            print(f"{'='*70}\n")
-            
-            # Expand multi-task into individual tasks
-            individual_tasks = self.task_parser.expand_multi_task(task_config)
-            
-            print(f"📋 Expanded into {len(individual_tasks)} individual tasks:")
-            for i, task in enumerate(individual_tasks, 1):
-                print(f"   {i}. {task['name']}")
-            print()
-            
-            # Execute each individual task
-            all_results = []
-            for i, individual_task in enumerate(individual_tasks, 1):
-                print(f"\n{'='*70}")
-                print(f"🚀 EXECUTING TASK {i}/{len(individual_tasks)}")
-                print(f"{'='*70}")
-                
-                result = self.execute_dynamic_task(individual_task)
-                result["task_number"] = i
-                result["total_tasks"] = len(individual_tasks)
-                result["original_query"] = query
-                all_results.append(result)
-                
-                if not result.get('success', False):
-                    print(f"\n⚠️  Task {i} failed, stopping multi-task execution")
-                    break
-                
-                if i < len(individual_tasks):
-                    print(f"\n✅ Task {i} completed. Continuing to next task...")
-                    import time
-                    time.sleep(2)  # Brief pause between tasks
-            
-            # Return summary result
-            successful_tasks = sum(1 for r in all_results if r.get('success', False))
-            return {
-                "success": successful_tasks == len(individual_tasks),
-                "original_query": query,
-                "is_multi_task": True,
-                "total_tasks": len(individual_tasks),
-                "successful_tasks": successful_tasks,
-                "failed_tasks": len(individual_tasks) - successful_tasks,
-                "individual_results": all_results,
-                "summary": f"Completed {successful_tasks}/{len(individual_tasks)} tasks"
-            }
-        else:
-            # Execute single task
-            print(f"\n{'='*70}")
-            print(f"🚀 EXECUTING DYNAMIC TASK")
-            print(f"{'='*70}\n")
-            
-            result = self.execute_dynamic_task(task_config)
-            result["original_query"] = query
-            
-            return result
-    
-    
-    def execute_dynamic_task(self, task_config: Dict) -> Dict:
-        """
-        Execute a dynamically generated task configuration
-        
-        This method accepts task configs from the parser (runtime)
-        or from task_definitions.py (predefined)
-        
-        Args:
-            task_config: Task configuration dictionary
-            
-        Returns:
-            Task execution metadata
-        """
-        print("\n" + "="*70)
-        print(f"🚀 STARTING DYNAMIC TASK: {task_config['name']}")
-        print("="*70)
-        print(f"Goal: {task_config['goal']}")
-        print(f"App: {task_config['app'].upper()}")
-        print(f"Start URL: {task_config['start_url']}")
-        print(f"Max steps: {task_config['max_steps']}")
-        print("="*70 + "\n")
-        
-        # Create dataset directory
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        dataset_name = f"{task_config['task_id']}"
-        dataset_dir = Path("dataset") / dataset_name
-        dataset_dir.mkdir(parents=True, exist_ok=True)
-        
-        print(f"📁 Dataset directory: {dataset_dir}")
-        
-        # Initialize metadata
-        metadata = {
-            "task_id": task_config['task_id'],
-            "task_name": task_config['name'],
-            "app": task_config['app'],
-            "goal": task_config['goal'],
-            "start_url": task_config['start_url'],
-            "started_at": datetime.now().isoformat(),
-            "steps": [],
-            "success": False,
-            "total_steps": 0,
-            "parsed_from_query": task_config.get('parsed_from_query', '')
-        }
-        
-        # Reset action history
-        self.action_history = []
-        
-        # Setup browser
-        if not self.browser.setup_browser(task_config):
-            return {"success": False, "error": "Browser setup failed"}
-        
-        # Navigate to start URL
-        if not self.browser.navigate_to_url(task_config['start_url']):
-            self.browser.cleanup()
-            return {"success": False, "error": "Navigation failed"}
-        
-        # Execute main task loop
-        try:
-            success = self._execute_task_loop(task_config, dataset_dir, metadata)
-            metadata["success"] = success
-        except Exception as e:
-            print(f"\n❌ Task execution failed: {e}")
-            import traceback
-            traceback.print_exc()
-            metadata["error"] = str(e)
-            metadata["success"] = False
-        finally:
-            # Always cleanup browser
-            self.browser.cleanup()
-        
-        # Save final metadata
-        self._finalize_metadata(metadata, dataset_dir)
-        
-        # Print summary
-        self._print_task_summary(metadata, dataset_dir)
-        
-        return metadata
-    
-    def execute_task(self, task_id: str) -> Dict:
-        """
-        Execute a complete task from start to finish
-        
-        Args:
-            task_id: Task identifier (e.g., "linear_create_project")
-            
-        Returns:
-            Task execution metadata
-        """
-        # Get task configuration
-        try:
-            task_config = get_task_by_id(task_id)
-        except ValueError as e:
-            print(f"❌ Error: {e}")
-            print(f"Available tasks: {list_all_tasks()}")
-            return {"success": False, "error": str(e)}
-        
-        self._print_task_header(task_config)
-        
-        # Create dataset directory
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        dataset_name = f"{task_id}_{timestamp}"
-        dataset_dir = Path("dataset") / dataset_name
-        dataset_dir.mkdir(parents=True, exist_ok=True)
-        
-        print(f"📁 Dataset directory: {dataset_dir}")
-        
-        # Initialize metadata
-        metadata = self._initialize_metadata(task_config, dataset_dir)
-        
-        # Reset action history
-        self.action_history = []
-        
-        # Setup browser
-        if not self.browser.setup_browser(task_config):
-            return {"success": False, "error": "Browser setup failed"}
-        
-        # Navigate to start URL
-        if not self.browser.navigate_to_url(task_config['start_url']):
-            self.browser.cleanup()
-            return {"success": False, "error": "Navigation failed"}
-        
-        # Execute main task loop
-        try:
-            success = self._execute_task_loop(task_config, dataset_dir, metadata)
-            metadata["success"] = success
-        except Exception as e:
-            print(f"\n❌ Task execution failed: {e}")
-            import traceback
-            traceback.print_exc()
-            metadata["error"] = str(e)
-            metadata["success"] = False
-        finally:
-            # Always cleanup browser
-            self.browser.cleanup()
-        
-        # Save final metadata
-        self._finalize_metadata(metadata, dataset_dir)
-        
-        # Print summary
-        self._print_task_summary(metadata, dataset_dir)
-        
-        return metadata
-    
-    def _print_task_header(self, task_config: Dict):
-        """Print task start header"""
-        print("\n" + "="*70)
-        print(f"🚀 STARTING TASK: {task_config['name']}")
-        print("="*70)
-        print(f"Goal: {task_config['goal']}")
-        print(f"App: {task_config['app'].upper()}")
-        print(f"Start URL: {task_config['start_url']}")
-        print(f"Max steps: {task_config['max_steps']}")
-        print("="*70 + "\n")
-    
-    def _initialize_metadata(self, task_config: Dict, dataset_dir: Path) -> Dict:
-        """Initialize task metadata"""
-        return {
-            "task_id": task_config['task_id'],
-            "task_name": task_config['name'],
-            "app": task_config['app'],
-            "goal": task_config['goal'],
-            "start_url": task_config['start_url'],
-            "started_at": datetime.now().isoformat(),
-            "steps": [],
-            "success": False,
-            "total_steps": 0,
-            "dataset_dir": str(dataset_dir)
-        }
-    
-    def _execute_task_loop(self, task_config: Dict, dataset_dir: Path, metadata: Dict) -> bool:
-        """
-        Main task execution loop
-        
-        Returns:
-            True if task completed successfully, False otherwise
-        """
-        max_steps = task_config['max_steps']
-        goal = task_config['goal']
-        
-        consecutive_failures = 0
-        max_consecutive_failures = 3
-        
-        for step_num in range(1, max_steps + 1):
-            print(f"\n{'─'*70}")
-            print(f"📸 STEP {step_num}/{max_steps}")
-            print(f"{'─'*70}")
-            
-            try:
-                # Execute single step
-                step_success = self._execute_single_step(
-                    step_num=step_num,
-                    goal=goal,
-                    task_config=task_config,
-                    dataset_dir=dataset_dir,
-                    metadata=metadata
-                )
-                
-                if step_success == "completed":
-                    print("\n🎉 Task marked as complete by agent!")
-                    print("✅ Task completion validated successfully")
-                    return True
-                elif step_success == "failed":
-                    consecutive_failures += 1
-                    if consecutive_failures >= max_consecutive_failures:
-                        print(f"\n⚠️  Too many consecutive failures ({max_consecutive_failures})")
-                        print("   Stopping task execution")
-                        return False
-                else:
-                    consecutive_failures = 0  # Reset on success
-                
-                # Small delay between actions
-                time.sleep(1)
-                
-            except Exception as e:
-                print(f"\n❌ Step {step_num} failed: {e}")
-                consecutive_failures += 1
-                
-                if consecutive_failures >= max_consecutive_failures:
-                    print(f"\n⚠️  Too many consecutive failures ({max_consecutive_failures})")
-                    return False
-                
-                # Save error screenshot
-                self._save_error_screenshot(dataset_dir, step_num)
-                continue
-        
-        print(f"\n⚠️  Reached maximum steps ({max_steps})")
-        return False
-    
-    def _execute_single_step(
-        self,
-        step_num: int,
-        goal: str,
-        task_config: Dict,
-        dataset_dir: Path,
-        metadata: Dict
-    ) -> str:
-        """
-        Execute a single step of the task
-        
-        Returns:
-            "completed" if task finished, "failed" if step failed, "continue" if should continue
-        """
-        # 1. ANNOTATE PAGE
-        print("1️⃣  Annotating page...")
-        annotation_result = self.browser.annotate_and_capture()
-        
-        if not annotation_result['bboxes']:
-            print("⚠️  No interactive elements found - might be loading")
-            time.sleep(2)
-            return "continue"
-        
-        print(f"   Found {len(annotation_result['bboxes'])} interactive elements")
-        
-        # 2. SAVE SCREENSHOT
-        screenshot_filename = f"step_{step_num:02d}.png"
-        screenshot_path = dataset_dir / screenshot_filename
-        
-        with open(screenshot_path, 'wb') as f:
-            f.write(annotation_result['screenshot'])
-        
-        print(f"2️⃣  Screenshot saved: {screenshot_filename}")
-        
-        # 3. DETECT UI STATE
-        print("3️⃣  Detecting UI state...")
-        ui_state = get_complete_ui_state(self.browser.page)
-        description = describe_ui_state(ui_state)
-        print(f"   {description}")
-        
-        # 4. GET NEXT ACTION FROM GEMINI
-        print("4️⃣  Asking Gemini for next action...")
-        action = self.gemini.get_next_action(
-            goal=goal,
-            screenshot_b64=annotation_result['screenshot_b64'],
-            bboxes=annotation_result['bboxes'],
-            current_url=self.browser.get_current_url(),
-            action_history=self.action_history,
-            task_parameters=task_config.get('parameters', {})
-        )
-        
-        self._print_action_info(action)
-        
-        # 5. VALIDATE TASK COMPLETION (if finish action)
-        if action['action'] == 'finish':
-            if self.gemini.validate_task_completion(
-                task_config=task_config,
-                current_url=self.browser.get_current_url(),
-                page_title=self.browser.get_page_title(),
-                action=action
-            ):
-                # Save final step and return completion
-                self._save_step_metadata(
-                    step_num, action, "Task completed successfully", 
-                    ui_state, description, screenshot_filename, dataset_dir, metadata
-                )
-                return "completed"
-            else:
-                print("\n❌ Task completion validation failed - continuing...")
-                # Convert finish to wait and continue
-                action['action'] = 'wait'
-                action['reasoning'] = 'Task not actually complete - continuing automation'
-        
-        # 6. EXECUTE ACTION
-        print("5️⃣  Executing action...")
-        observation = self.browser.execute_action(action, annotation_result['bboxes'])
-        print(f"   ✅ {observation}")
-        
-        # 7. SAVE STEP METADATA
-        self._save_step_metadata(
-            step_num, action, observation, ui_state, description, 
-            screenshot_filename, dataset_dir, metadata
-        )
-        
-        # 8. UPDATE HISTORY
-        self.action_history.append({
-            "step": step_num,
-            "action": action['action'],
-            "observation": observation
-        })
-        
-        return "continue"
-    
-    def _print_action_info(self, action: Dict):
-        """Print action information"""
-        print(f"   🤖 Action: {action['action']}")
-        if action.get('element_id') is not None:
-            print(f"   🎯 Element: [{action['element_id']}]")
-        if action.get('text'):
-            print(f"   ✍️  Text: '{action['text'][:50]}...'")
-        if action.get('reasoning'):
-            print(f"   💭 Reasoning: {action['reasoning']}")
-    
-    def _save_step_metadata(
-        self,
-        step_num: int,
-        action: Dict,
-        observation: str,
-        ui_state: Dict,
-        description: str,
-        screenshot_filename: str,
-        dataset_dir: Path,
-        metadata: Dict
-    ):
-        """Save metadata for a single step"""
-        step_metadata = {
-            "step": step_num,
-            "url": self.browser.get_current_url(),
-            "screenshot": screenshot_filename,
-            "action": action,
-            "observation": observation,
-            "ui_state": ui_state,
-            "description": description,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        metadata["steps"].append(step_metadata)
-        
-        # Save individual step JSON
-        step_json_path = dataset_dir / f"step_{step_num:02d}.json"
-        with open(step_json_path, 'w') as f:
-            json.dump(step_metadata, f, indent=2)
-    
-    def _save_error_screenshot(self, dataset_dir: Path, step_num: int):
-        """Save screenshot on error"""
-        try:
-            error_screenshot = self.browser.page.screenshot()
-            error_path = dataset_dir / f"step_{step_num:02d}_error.png"
-            with open(error_path, 'wb') as f:
-                f.write(error_screenshot)
-        except:
-            pass
-    
-    def _finalize_metadata(self, metadata: Dict, dataset_dir: Path):
-        """Save final metadata to file"""
-        metadata["finished_at"] = datetime.now().isoformat()
-        metadata["total_steps"] = len(metadata["steps"])
-        
-        metadata_path = dataset_dir / "metadata.json"
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
-    
-    def _print_task_summary(self, metadata: Dict, dataset_dir: Path):
-        """Print task completion summary"""
-        print("\n" + "="*70)
-        if metadata["success"]:
-            print("✅ TASK COMPLETED SUCCESSFULLY")
-        else:
-            print("⚠️  TASK INCOMPLETE")
-        print("="*70)
-        print(f"Total steps: {metadata['total_steps']}")
-        print(f"Dataset saved: {dataset_dir}")
-        print("="*70 + "\n")
+class AgentB(AgentBase):
+    """Standard Agent B implementation using the annotated browser controller."""
+
+    BROWSER_CONTROLLER_CLS = BrowserController
+
+    MODE_NAME = "AGENT B - WEB AUTOMATION AGENT"
+    MODE_INTRO_LINES = [
+        "Components: BrowserController + GeminiClient + StateDetector",
+        "Mode: RUNTIME FLEXIBLE",
+    ]
+
+    QUERY_HEADER_TITLE = "🤖 AGENT B - HANDLING RUNTIME QUERY"
+    MULTI_TASK_HEADER_TITLE = "🔥 MULTI-TASK DETECTED"
+    SINGLE_TASK_HEADER_TITLE = "🚀 STARTING DYNAMIC TASK"
+    PREDEFINED_TASK_HEADER_TITLE = "🚀 STARTING TASK"
+
+    def _capture_annotation(self):
+        return self.browser.annotate_and_capture()
 
 
-def main():
-    """Main entry point - supports CLI and interactive modes"""
-    print("\n" + "="*70)
-    print("🤖 AGENT B - WEB AUTOMATION AGENT")
-    print("="*70)
-    print("Mode: RUNTIME FLEXIBLE")
-    print("="*70)
-    
-    # Check API key
+def _build_agent() -> AgentB:
+    load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         print("\n❌ Error: GEMINI_API_KEY not found in .env file")
         print("   Please add your API key to .env")
         print("   Get key from: https://aistudio.google.com/app/apikey")
         sys.exit(1)
-    
-    # Create agent
-    agent = AgentB(gemini_api_key=api_key)
-    
-    # Parse command line arguments
-    import argparse
+    return AgentB(gemini_api_key=api_key)
+
+
+def main() -> None:
+    print_launch_banner("🤖 AGENT B - WEB AUTOMATION AGENT", "Mode: RUNTIME FLEXIBLE")
+    agent = _build_agent()
+
     parser = argparse.ArgumentParser(
-        description='Agent B - Web Automation Agent with Runtime Flexibility',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Single task queries:
-  python src/agent.py "How do I create a project in Linear?"
-  python src/agent.py "Show me how to filter issues in Linear"
-  
-  # Multi-task queries (any quantity):
-  python src/agent.py "Create 7 projects named Sprint A through G"
-  python src/agent.py "Create 12 issues with titles Bug 1, Bug 2, Bug 3..."
-  
-  # Predefined task by ID:
-  python src/agent.py --task linear_create_project
-  
-  # Run all predefined tasks:
-  python src/agent.py --all
-        """
+        description="Agent B - Web Automation Agent with Runtime Flexibility"
     )
-    
-    parser.add_argument(
-        'query',
-        nargs='?',
-        help='Natural language query (e.g., "How do I create a project in Linear?")'
-    )
-    
-    parser.add_argument(
-        '--task',
-        help='Execute a predefined task by ID (e.g., linear_create_project)'
-    )
-    
-    parser.add_argument(
-        '--all',
-        action='store_true',
-        help='Run all predefined tasks in batch'
-    )
-    
-    parser.add_argument(
-        '--list',
-        action='store_true',
-        help='List all available predefined tasks'
-    )
-    
+    parser.add_argument("query", nargs="?", help="Natural language query to execute")
+    parser.add_argument("--task", help="Execute a predefined task by ID")
+    parser.add_argument("--all", action="store_true", help="Run all predefined tasks")
+    parser.add_argument("--list", action="store_true", help="List predefined tasks")
     args = parser.parse_args()
-    
-    # Handle --list flag
+
     if args.list:
-        print("\n" + "="*70)
-        print("📋 AVAILABLE PREDEFINED TASKS")
-        print("="*70)
-        
-        for i, task in enumerate(TASKS, 1):
-            print(f"\n{i}. {task['task_id']}")
-            print(f"   App: {task['app'].upper()}")
-            print(f"   Goal: {task['goal']}")
-        
-        print("\n" + "="*70)
-        print("\nUsage:")
-        print(f"  python src/agent.py --task {TASKS[0]['task_id']}")
-        print("="*70 + "\n")
+        list_predefined_tasks("agent.py")
         return
-    
-    # Handle --all flag
+
     if args.all:
-        print("\n🚀 BATCH MODE - Running all predefined tasks...")
-        print("="*70 + "\n")
-        
-        for i, task in enumerate(TASKS, 1):
-            print(f"\n[{i}/{len(TASKS)}] Starting: {task['name']}")
-            result = agent.execute_task(task['task_id'])
-            
-            if result.get('success'):
-                print(f"✅ Completed: {task['name']}")
-            else:
-                print(f"⚠️  Failed: {task['name']}")
-            
-            if i < len(TASKS):
-                print("\n" + "="*70)
-                input("Press ENTER to continue to next task...")
-        
-        print("\n✅ All tasks completed!")
+        handle_batch(agent)
         return
-    
-    # Handle --task flag
+
     if args.task:
-        print(f"\n🎯 PREDEFINED TASK MODE")
-        print(f"Task ID: {args.task}")
-        print("="*70 + "\n")
-        
-        result = agent.execute_task(args.task)
-        
-        if result.get('success'):
-            print("\n✅ Task completed successfully!")
-            print(f"   Dataset: dataset/{result.get('task_id', 'unknown')}_*/")
-        else:
-            print("\n⚠️  Task did not complete")
-            if 'error' in result:
-                print(f"   Error: {result['error']}")
-        
+        handle_task(agent, args.task)
         return
-    
-    # Handle natural language query from command line
+
     if args.query:
-        print(f"\n🗣️  NATURAL LANGUAGE MODE (CLI)")
-        print(f"Query: {args.query}")
-        print("="*70 + "\n")
-        
-        result = agent.handle_query(args.query)
-        
-        if result.get('success'):
-            print("\n✅ Query handled successfully!")
-            print(f"   Original query: {result.get('original_query', 'N/A')}")
-            
-            if result.get('is_multi_task', False):
-                print(f"   Multi-task: {result.get('successful_tasks', 0)}/{result.get('total_tasks', 0)} completed")
-                print(f"   Summary: {result.get('summary', 'N/A')}")
-                print(f"   Datasets: Multiple dataset directories created")
-            else:
-                print(f"   Task ID: {result.get('task_id', 'unknown')}")
-                print(f"   Dataset: dataset/{result.get('task_id', 'unknown')}/")
-        else:
-            print("\n⚠️  Query did not complete")
-            if 'error' in result:
-                print(f"   Error: {result['error']}")
-            elif result.get('is_multi_task', False):
-                print(f"   Multi-task: {result.get('successful_tasks', 0)}/{result.get('total_tasks', 0)} completed")
-                print(f"   {result.get('failed_tasks', 0)} tasks failed")
-        
+        print(f"\n🗣️  NATURAL LANGUAGE MODE (CLI)\nQuery: {args.query}\n" + "=" * 70 + "\n")
+        handle_query(agent, args.query)
         return
-    
-    # INTERACTIVE MODE (no arguments provided)
-    print("\n" + "="*70)
-    print("📋 INTERACTIVE MODE")
-    print("="*70)
-    print("\n1. NATURAL LANGUAGE QUERY")
-    print("   Enter a query like: 'How do I create a project in Linear?'")
-    print("\n2. PREDEFINED TASK")
-    print("   Choose from existing task definitions")
-    print("\n3. BATCH ALL TASKS")
-    print("   Run all predefined tasks")
-    print("\n" + "="*70)
-    
-    mode = input("\nChoose mode (1/2/3): ").strip()
-    
-    if mode == "1":
-        # NATURAL LANGUAGE MODE
-        print("\n" + "="*70)
-        print("🗣️  NATURAL LANGUAGE MODE")
-        print("="*70)
-        print("\nExample queries:")
-        print("  SINGLE TASKS:")
-        print("  - How do I create a project in Linear?")
-        print("  - Show me how to filter issues in Linear")
-        print("  - How do I create a page in Notion?")
-        print("  MULTI-TASKS (any quantity):")
-        print("  - Create [N] projects with titles [name1, name2, ...]")
-        print("  - Create [N] issues called [pattern] 1 through [N]")
-        print("  - Create pages titled [any names you want]")
-        print("\n" + "="*70)
-        
-        query = input("\nEnter your query: ").strip()
-        
-        if not query:
-            print("❌ No query entered")
-            return
-        
-        # Execute using natural language parser
-        result = agent.handle_query(query)
-        
-        # Show summary
-        if result.get('success'):
-            print("\n✅ Query handled successfully!")
-            print(f"   Dataset: dataset/{result.get('task_id', 'unknown')}/")
-        else:
-            print("\n⚠️  Query did not complete")
-            if 'error' in result:
-                print(f"   Error: {result['error']}")
-    
-    elif mode == "2":
-        # PREDEFINED TASK MODE
-        print("\n" + "="*70)
-        print("📋 PREDEFINED TASKS")
-        print("="*70)
-        
-        for i, task in enumerate(TASKS, 1):
-            print(f"\n{i}. {task['task_id']}")
-            print(f"   App: {task['app'].upper()}")
-            print(f"   Goal: {task['goal']}")
-        
-        print("\n" + "="*70)
-        
-        task_input = input("\nEnter task number or task_id: ").strip()
-        
-        try:
-            task_num = int(task_input)
-            if 1 <= task_num <= len(TASKS):
-                task_id = TASKS[task_num - 1]['task_id']
-            else:
-                print(f"❌ Invalid task number. Choose 1-{len(TASKS)}")
-                return
-        except ValueError:
-            task_id = task_input
-        
-        # Execute predefined task
-        result = agent.execute_task(task_id)
-        
-        # Show summary
-        if result.get('success'):
-            print("\n✅ Task completed successfully!")
-        else:
-            print("\n⚠️  Task did not complete")
-    
-    elif mode == "3":
-        # BATCH MODE
-        print("\n🚀 Running ALL predefined tasks...")
-        for task in TASKS:
-            agent.execute_task(task['task_id'])
-            print("\n" + "="*70)
-            input("Press ENTER to continue to next task...")
-    
-    else:
-        print("❌ Invalid mode selected")
+
+    interactive_menu(
+        agent,
+        menu_title="📋 INTERACTIVE MODE",
+        query_mode_title="🗣️  NATURAL LANGUAGE MODE",
+        query_examples=[
+            "SINGLE TASKS:",
+            "- How do I create a project in Linear?",
+            "- Show me how to filter issues in Linear",
+            "- How do I create a page in Notion?",
+        ],
+        multi_examples=[
+            "Create [N] projects with titles [name1, name2, ...]",
+            "Create [N] issues called [pattern] 1 through [N]",
+            "Create pages titled [any names you want]",
+        ],
+    )
 
 
 if __name__ == "__main__":

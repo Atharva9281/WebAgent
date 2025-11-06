@@ -32,21 +32,33 @@ def detect_modals(page: Page) -> List[Dict]:
         # Check for ARIA role="dialog"
         dialogs = page.query_selector_all('[role="dialog"]')
         for dialog in dialogs:
-            if dialog.is_visible():
+            try:
+                if not dialog.is_visible():
+                    continue
+                try:
+                    bbox = dialog.bounding_box()
+                except Exception:
+                    bbox = None
+                if not bbox or bbox.get("width", 0) < 10 or bbox.get("height", 0) < 10:
+                    continue
                 # Try to get modal title
                 title = ""
                 try:
                     title_element = dialog.query_selector('h1, h2, h3, [class*="title"], [class*="heading"]')
                     if title_element:
                         title = title_element.text_content() or ""
-                except:
+                except Exception:
                     pass
-                
+
                 modals.append({
                     "type": "dialog",
                     "title": title.strip()[:100],
-                    "visible": True
+                    "visible": True,
+                    "state": "visible",
+                    "bbox": bbox
                 })
+            except Exception:
+                continue
         
         # Check for common modal class patterns
         modal_selectors = [
@@ -61,12 +73,20 @@ def detect_modals(page: Page) -> List[Dict]:
                 elements = page.query_selector_all(selector)
                 for element in elements:
                     if element.is_visible():
+                        try:
+                            bbox = element.bounding_box()
+                        except Exception:
+                            bbox = None
+                        if not bbox or bbox.get("width", 0) < 10 or bbox.get("height", 0) < 10:
+                            continue
                         # Avoid duplicates
                         if not any(m.get("type") == "modal" for m in modals):
                             modals.append({
                                 "type": "modal",
                                 "selector": selector,
-                                "visible": True
+                                "visible": True,
+                                "state": "visible",
+                                "bbox": bbox
                             })
                         break
             except:
@@ -76,10 +96,21 @@ def detect_modals(page: Page) -> List[Dict]:
         try:
             overlay = page.query_selector('[class*="overlay"], [class*="backdrop"]')
             if overlay and overlay.is_visible():
-                if not modals:  # Only add if no other modals detected
+                try:
+                    bbox = overlay.bounding_box()
+                except Exception:
+                    bbox = None
+                if (
+                    bbox
+                    and bbox.get("width", 0) >= 10
+                    and bbox.get("height", 0) >= 10
+                    and not modals  # Only add if no other modals detected
+                ):
                     modals.append({
                         "type": "overlay",
-                        "visible": True
+                        "visible": True,
+                        "state": "visible",
+                        "bbox": bbox
                     })
         except:
             pass
@@ -87,7 +118,35 @@ def detect_modals(page: Page) -> List[Dict]:
     except Exception as e:
         print(f"Warning: Error detecting modals: {e}")
     
-    return modals
+    if not modals:
+        return modals
+
+    deduped = []
+    seen = set()
+    for modal in modals:
+        bbox = modal.get("bbox") or {}
+        key = None
+        if bbox:
+            key = (
+                round(bbox.get("x", 0), 1),
+                round(bbox.get("y", 0), 1),
+                round(bbox.get("width", 0), 1),
+                round(bbox.get("height", 0), 1),
+            )
+        else:
+            key = modal.get("selector") or modal.get("title") or modal.get("type")
+
+        if key in seen:
+            continue
+        seen.add(key)
+
+        # Normalise when width is extremely small (likely invisible artifact)
+        if bbox and (bbox.get("width", 0) < 10 or bbox.get("height", 0) < 10):
+            continue
+
+        deduped.append(modal)
+
+    return deduped
 
 
 def get_form_states(page: Page) -> List[Dict]:
@@ -147,9 +206,11 @@ def get_form_states(page: Page) -> List[Dict]:
                     if field_info["id"]:
                         label = page.query_selector(f'label[for="{field_info["id"]}"]')
                         if label:
-                            field_info["label"] = label.text_content()[:100]
+                            field_info["label"] = (label.text_content() or "")[:100]
                 except:
                     pass
+
+                field_info["state"] = "filled" if field_info["filled"] else "empty"
                 
                 form_fields.append(field_info)
                 
@@ -160,6 +221,36 @@ def get_form_states(page: Page) -> List[Dict]:
         print(f"Warning: Error getting form states: {e}")
     
     return form_fields
+
+
+def summarise_forms(page: Page) -> Dict:
+    """Build lightweight summary statistics for form controls."""
+    summary = {
+        "checkbox_count": 0,
+        "filled_count": 0
+    }
+
+    try:
+        checkboxes = page.query_selector_all('input[type="checkbox"]')
+        summary["checkbox_count"] = len(checkboxes)
+
+        filled = 0
+        for checkbox in checkboxes:
+            try:
+                if checkbox.is_checked():
+                    filled += 1
+            except Exception:
+                try:
+                    if checkbox.evaluate("el => !!el.checked"):
+                        filled += 1
+                except Exception:
+                    continue
+
+        summary["filled_count"] = filled
+    except Exception:
+        pass
+
+    return summary
 
 
 def detect_dropdowns_open(page: Page) -> List[Dict]:
@@ -183,7 +274,8 @@ def detect_dropdowns_open(page: Page) -> List[Dict]:
                 dropdowns.append({
                     "type": "expanded",
                     "aria_label": element.get_attribute('aria-label') or '',
-                    "visible": True
+                    "visible": True,
+                    "state": "visible"
                 })
         
         # Check for role="listbox" or role="menu"
@@ -192,7 +284,8 @@ def detect_dropdowns_open(page: Page) -> List[Dict]:
             if listbox.is_visible():
                 dropdowns.append({
                     "type": "listbox",
-                    "visible": True
+                    "visible": True,
+                    "state": "visible"
                 })
                 
     except Exception as e:
@@ -212,6 +305,7 @@ def detect_loading_state(page: Page) -> Dict:
         Dict with loading state information
     """
     loading = {
+        "state": "idle",
         "is_loading": False,
         "indicators": []
     }
@@ -231,6 +325,7 @@ def detect_loading_state(page: Page) -> Dict:
                 elements = page.query_selector_all(selector)
                 for element in elements:
                     if element.is_visible():
+                        loading["state"] = "active"
                         loading["is_loading"] = True
                         loading["indicators"].append(selector)
                         break
@@ -296,6 +391,7 @@ def get_complete_ui_state(page: Page) -> Dict:
         "title": page.title() if hasattr(page, 'title') else "",
         "modals": detect_modals(page),
         "forms": get_form_states(page),
+        "forms_summary": summarise_forms(page),
         "dropdowns": detect_dropdowns_open(page),
         "loading": detect_loading_state(page),
         "page_hash": get_page_hash(page)

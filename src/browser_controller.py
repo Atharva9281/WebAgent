@@ -152,7 +152,7 @@ class BrowserController:
             
             # Give extra time for any dynamic content
             print("🕐 Allowing time for dynamic content...")
-            self.page.wait_for_timeout(3000)
+            self.page.wait_for_timeout(1000)
             
             print("✅ Navigation complete\n")
             return True
@@ -253,7 +253,7 @@ class BrowserController:
         self.page.mouse.click(bbox['x'], bbox['y'])
         
         # Wait for potential navigation/modal
-        self.page.wait_for_timeout(2000)
+        self.page.wait_for_timeout(1000)
         
         return f"Clicked element [{element_id}]: {bbox['text'][:50].strip()}"
     
@@ -295,7 +295,7 @@ class BrowserController:
     
     def _execute_wait(self) -> str:
         """Execute wait action"""
-        self.page.wait_for_timeout(3000)
+        self.page.wait_for_timeout(1000)
         return "Waited 3 seconds"
     
     def get_current_url(self) -> str:

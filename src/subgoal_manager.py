@@ -1,5 +1,5 @@
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Iterable
 
 
 MONTH_SYNONYMS = {
@@ -22,12 +22,37 @@ class SubGoalManager:
     """Track and manage ordered sub-goals extracted from a task configuration."""
 
     OPTIONAL_CLICK_KEYWORDS = ["icon", "emoji", "avatar", "color", "image"]
+    STATUS_TOKENS = [
+        "backlog",
+        "todo",
+        "to do",
+        "in progress",
+        "in-progress",
+        "inprogress",
+        "done",
+        "completed",
+        "complete",
+        "canceled",
+        "cancelled",
+        "blocked",
+    ]
+    PRIORITY_TOKENS = [
+        "no priority",
+        "none",
+        "urgent",
+        "high",
+        "medium",
+        "low",
+        "critical",
+    ]
+    DESCRIPTION_ARIA_KEYWORDS = ["description", "details", "summary", "notes"]
 
     def __init__(self, task_config: Dict):
         self.task_config = task_config
         self.goals: List[Dict] = []
         self.pending_goal: Optional[Dict] = None
         self._loading_finish_blocks = 0
+        self._modal_bbox: Optional[Dict] = None
         self._setup_goals(task_config)
         print(f"[SubGoalManager] Initialized goals: {self.goals}")
 
@@ -44,6 +69,10 @@ class SubGoalManager:
         texts = self._collect_bbox_text(bboxes)
 
         url = ui_state.get("url") or ""
+        self._modal_bbox = self._extract_modal_bbox(ui_state)
+
+        status_control = self._find_status_control(bboxes)
+        priority_control = self._find_priority_control(bboxes)
 
         for index, goal in enumerate(self.goals):
             if goal["completed"]:
@@ -57,13 +86,15 @@ class SubGoalManager:
             elif key == "project_name":
                 goal["completed"] = self._is_value_in_forms(value, forms)
             elif key == "status":
-                goal["completed"] = self._is_status_selected(value, texts)
+                goal["completed"] = self._control_matches(status_control, value)
             elif key == "priority":
-                goal["completed"] = self._is_priority_selected(value, texts)
+                goal["completed"] = self._control_matches(priority_control, value)
             elif key == "target_date":
                 goal["completed"] = self._is_date_visible(value, texts)
             elif key == "filter":
                 goal["completed"] = self._is_filter_applied(value, texts)
+            elif key == "description":
+                goal["completed"] = self._is_description_filled(value, forms)
             elif key == "submit":
                 prior_complete = all(g["completed"] for g in self.goals[:index])
                 if prior_complete and not ui_state.get("modals"):
@@ -116,9 +147,12 @@ class SubGoalManager:
             self._loading_finish_blocks = 0
             return f"Pending sub-goal: {self.pending_goal['key']}"
         if ui_state.get("loading", {}).get("is_loading"):
-            if self._loading_finish_blocks == 0:
-                self._loading_finish_blocks = 1
-                return "Page still loading"
+            if not self.all_completed():
+                if self._loading_finish_blocks == 0:
+                    self._loading_finish_blocks = 1
+                    return "Page still loading"
+            else:
+                self._loading_finish_blocks = 0
         else:
             self._loading_finish_blocks = 0
         return None
@@ -239,25 +273,30 @@ class SubGoalManager:
                 print("⚠️  Typing skipped - different sub-goal pending.")
                 return {"action": "wait", "reasoning": "Focus on pending sub-goal instead of typing"}
 
-        if (
-            action["action"] == "click"
-            and self._goal_completed("status")
-            and element_text
-            and any(token in element_text for token in ["status", "backlog", "progress", "todo"])
-            and (not self.pending_goal or self.pending_goal["key"] != "status")
-        ):
-            print("⚠️  Status already satisfied. Skipping redundant click.")
-            return {"action": "wait", "reasoning": "Status already satisfied"}
-
-        if (
-            action["action"] == "click"
-            and self._goal_completed("priority")
-            and element_text
-            and "priority" in element_text
-            and (not self.pending_goal or self.pending_goal["key"] != "priority")
-        ):
-            print("⚠️  Priority already satisfied. Skipping redundant click.")
-            return {"action": "wait", "reasoning": "Priority already satisfied"}
+        pending_goal = self.pending_goal
+        if pending_goal:
+            goal_key = pending_goal.get("key")
+            goal_value = pending_goal.get("value") or ""
+            if goal_key == "project_name":
+                guided = self._guide_project_name_action(action, bboxes, goal_value)
+                if guided:
+                    return guided
+            elif goal_key == "status":
+                guided = self._guide_status_action(action, ui_state, bboxes, goal_value)
+                if guided:
+                    return guided
+            elif goal_key == "priority":
+                guided = self._guide_priority_action(action, ui_state, bboxes, goal_value)
+                if guided:
+                    return guided
+            elif goal_key == "description":
+                guided = self._guide_description_action(action, bboxes, goal_value)
+                if guided:
+                    return guided
+            elif goal_key == "submit":
+                guided = self._guide_submit_action(action, bboxes)
+                if guided:
+                    return guided
 
         if action["action"] == "click" and element_text:
             if any(keyword in element_text for keyword in self.OPTIONAL_CLICK_KEYWORDS):
@@ -265,7 +304,22 @@ class SubGoalManager:
                     print("⚠️  Skipping optional decoration control.")
                     return {"action": "wait", "reasoning": "Ignoring optional decoration controls"}
 
-        if not self.pending_goal and self.all_completed() and action["action"] != "finish":
+        if (
+            not self.pending_goal
+            and self.all_completed()
+            and action["action"] != "finish"
+        ):
+            control = self._find_submit_control(bboxes)
+            if control:
+                print(
+                    f"⚠️  All sub-goals satisfied. Redirecting to submit button "
+                    f"[{control['index']}] '{(control.get('text') or '').strip()}'"
+                )
+                return {
+                    "action": "click",
+                    "element_id": control["index"],
+                    "reasoning": "All fields complete. Submit the form to finish.",
+                }
             return {"action": "finish", "reasoning": "All required steps complete"}
 
         return action
@@ -290,21 +344,43 @@ class SubGoalManager:
                             goal["completed"] = True
                 if goal["key"] == "open_projects" and "project" in element_text:
                     goal["completed"] = True
+                if goal["key"] == "status":
+                    target = self._normalize_text(goal.get("value"))
+                    if target and target in element_text and "order" not in element_text:
+                        goal["completed"] = True
+                if goal["key"] == "priority":
+                    target = self._normalize_text(goal.get("value"))
+                    if target and target in element_text and "order" not in element_text:
+                        goal["completed"] = True
+                if goal["key"] == "submit":
+                    if any(
+                        keyword in element_text
+                        for keyword in ["create project", "create", "submit", "finish", "done"]
+                    ):
+                        goal["completed"] = True
 
         elif action_type == "type":
-            typed = (action.get("text") or "").strip().lower()
-            if not typed:
+            typed = (action.get("text") or "")
+            typed_norm = self._normalize_text(typed)
+            if not typed_norm:
                 return
             for goal in self.goals:
                 if goal["completed"]:
                     continue
                 if goal["key"] == "project_name":
                     target = (goal.get("value") or "").strip().lower()
-                    if target and target == typed:
+                    if target and target == typed_norm:
                         goal["completed"] = True
                 if goal["key"] == "priority":
-                    target = (goal.get("value") or "").strip().lower()
-                    if target and target in typed:
+                    target = self._normalize_text(goal.get("value"))
+                    if target and target in typed_norm:
+                        goal["completed"] = True
+                if goal["key"] == "description":
+                    target = self._normalize_text(goal.get("value"))
+                    if target:
+                        if target in typed_norm:
+                            goal["completed"] = True
+                    elif typed_norm:
                         goal["completed"] = True
 
         self.pending_goal = self._get_pending_goal()
@@ -331,6 +407,11 @@ class SubGoalManager:
         priority_value = params.get("priority") or params.get("importance") or params.get("urgency")
         target_value = params.get("target_date") or params.get("due_date") or params.get("deadline")
         filter_value = params.get("filter") or params.get("filter_status")
+        description_value = (
+            params.get("description")
+            or params.get("project_description")
+            or params.get("notes")
+        )
 
         if not filter_value:
             # Fallback: infer filter target from goal text
@@ -361,6 +442,8 @@ class SubGoalManager:
             self.goals.append({"key": "target_date", "value": target_value.strip(), "completed": False})
         if isinstance(filter_value, str) and filter_value.strip():
             self.goals.append({"key": "filter", "value": filter_value.strip(), "completed": False})
+        if isinstance(description_value, str) and description_value.strip():
+            self.goals.append({"key": "description", "value": description_value.strip(), "completed": False})
 
         if self.goals:
             self.goals.append({"key": "submit", "value": None, "completed": False})
@@ -393,6 +476,15 @@ class SubGoalManager:
                 return True
         return False
 
+    def _control_matches(self, control: Optional[Dict], value: Optional[str]) -> bool:
+        if not control or not value:
+            return False
+        control_text = (control.get("text") or control.get("ariaLabel") or "").strip().lower()
+        if not control_text:
+            return False
+        target_norm = self._normalize_text(value)
+        return target_norm in control_text
+
     def _is_status_selected(self, value: str, texts: List[str]) -> bool:
         target_norm = self._normalize_for_search(value)
         if not target_norm:
@@ -412,6 +504,20 @@ class SubGoalManager:
                 return True
         return False
 
+    def _is_description_filled(self, value: Optional[str], forms: List[Dict]) -> bool:
+        target_norm = self._normalize_text(value)
+        for field in forms:
+            field_type = (field.get("type") or "").lower()
+            aria = (field.get("aria_label") or "").lower()
+            if field_type in {"textarea"} or any(keyword in aria for keyword in self.DESCRIPTION_ARIA_KEYWORDS):
+                current_value = self._normalize_text(field.get("value", ""))
+                if target_norm:
+                    if target_norm in current_value:
+                        return True
+                elif current_value:
+                    return True
+        return False
+
     def _is_filter_applied(self, value: str, texts: List[str]) -> bool:
         target_norm = self._normalize_for_search(value)
         targets = {target_norm}
@@ -428,6 +534,331 @@ class SubGoalManager:
                     print(f"[SubGoalManager] Detected status phrase: {text!r}")
                     return True
         return False
+
+    def _guide_status_action(self, action: Dict, ui_state: Dict, bboxes: List[Dict], value: str) -> Optional[Dict]:
+        target_norm = self._normalize_text(value)
+        if self._dropdown_open(ui_state):
+            option = self._find_option_element(bboxes, target_norm)
+            if option:
+                if not self._action_targets(action, option["index"]):
+                    print(
+                        f"⚠️  Pending status '{value}'. Redirecting to option "
+                        f"[{option['index']}] '{(option.get('text') or '').strip()}'"
+                    )
+                    return {
+                        "action": "click",
+                        "element_id": option["index"],
+                        "reasoning": f"Select the status '{value}' in the dropdown.",
+                    }
+                return None
+
+            search = self._find_dropdown_search(bboxes, placeholder_keywords=["status"])
+            if search and not self._action_targets(action, search["index"]):
+                print(f"⚠️  Pending status '{value}'. Typing into status search field [{search['index']}]")
+                return {
+                    "action": "type",
+                    "element_id": search["index"],
+                    "text": value,
+                    "reasoning": f"Search for the status '{value}' before selecting it.",
+                }
+
+        control = self._find_status_control(bboxes)
+        if control and not self._action_targets(action, control["index"]):
+            label = (control.get("ariaLabel") or control.get("text") or "").strip()
+            print(
+                f"⚠️  Pending status '{value}'. Redirecting click to status control "
+                f"[{control['index']}] '{label}'"
+            )
+            return {
+                "action": "click",
+                "element_id": control["index"],
+                "reasoning": f"Open the status menu to change it to '{value}'.",
+            }
+
+        print("⚠️  Status options not yet accessible. Waiting briefly.")
+        return {
+            "action": "wait",
+            "reasoning": f"Waiting for status control or options matching '{value}' to appear.",
+        }
+
+    def _guide_priority_action(self, action: Dict, ui_state: Dict, bboxes: List[Dict], value: str) -> Optional[Dict]:
+        target_norm = self._normalize_text(value)
+        if self._dropdown_open(ui_state):
+            option = self._find_option_element(bboxes, target_norm)
+            if option and not self._action_targets(action, option["index"]):
+                print(
+                    f"⚠️  Pending priority '{value}'. Redirecting to option "
+                    f"[{option['index']}] '{(option.get('text') or '').strip()}'"
+                )
+                return {
+                    "action": "click",
+                    "element_id": option["index"],
+                    "reasoning": f"Select the priority '{value}' in the dropdown.",
+                }
+            if option:
+                return None
+            search = self._find_dropdown_search(bboxes, placeholder_keywords=["priority"])
+            if search and not self._action_targets(action, search["index"]):
+                print(f"⚠️  Pending priority '{value}'. Typing into priority search field [{search['index']}]")
+                return {
+                    "action": "type",
+                    "element_id": search["index"],
+                    "text": value,
+                    "reasoning": f"Search for the priority '{value}' before selecting it.",
+                }
+
+        control = self._find_priority_control(bboxes)
+        if control and not self._action_targets(action, control["index"]):
+            label = (control.get("ariaLabel") or control.get("text") or "").strip()
+            print(
+                f"⚠️  Pending priority '{value}'. Redirecting click to priority control "
+                f"[{control['index']}] '{label}'"
+            )
+            return {
+                "action": "click",
+                "element_id": control["index"],
+                "reasoning": f"Open the priority menu to change it to '{value}'.",
+            }
+
+        print("⚠️  Priority options not yet accessible. Waiting briefly.")
+        return {
+            "action": "wait",
+            "reasoning": f"Waiting for priority control or options matching '{value}' to appear.",
+        }
+
+    def _guide_description_action(self, action: Dict, bboxes: List[Dict], value: str) -> Optional[Dict]:
+        field = self._find_description_bbox(bboxes, modal_bbox=self._modal_bbox)
+        if not field:
+            return None
+        if action.get("action") == "type" and self._action_targets(action, field["index"]):
+            return None
+
+        text_to_use = action.get("text") or value.strip()
+        if not text_to_use:
+            text_to_use = self._auto_description_text()
+
+        print(f"⚠️  Pending description. Redirecting typing to element [{field['index']}]")
+        return {
+            "action": "type",
+            "element_id": field["index"],
+            "text": text_to_use,
+            "reasoning": "Fill in the project description field with the requested text.",
+        }
+
+    def _guide_project_name_action(self, action: Dict, bboxes: List[Dict], value: str) -> Optional[Dict]:
+        field = self._find_project_name_bbox(bboxes, modal_bbox=self._modal_bbox)
+        if not field:
+            return None
+        if action.get("action") == "type" and self._action_targets(action, field["index"]):
+            return None
+
+        desired_text = value.strip() or action.get("text") or "New project"
+        print(f"⚠️  Pending project name. Redirecting typing to element [{field['index']}]")
+        return {
+            "action": "type",
+            "element_id": field["index"],
+            "text": desired_text,
+            "reasoning": f"Type the project name '{desired_text}'.",
+        }
+
+    def _guide_submit_action(self, action: Dict, bboxes: List[Dict]) -> Optional[Dict]:
+        button = self._find_submit_control(bboxes, modal_bbox=self._modal_bbox)
+        if button and not self._action_targets(action, button["index"]):
+            label = (button.get("text") or button.get("ariaLabel") or "").strip()
+            print(
+                f"⚠️  All goals satisfied. Redirecting to submit control "
+                f"[{button['index']}] '{label}'"
+            )
+            return {
+                "action": "click",
+                "element_id": button["index"],
+                "reasoning": "All required fields complete. Submit to finish.",
+            }
+        return None
+
+    def _dropdown_open(self, ui_state: Dict) -> bool:
+        if not ui_state.get("modals"):
+            return False
+        dropdowns = ui_state.get("dropdowns") or []
+        return bool(dropdowns)
+
+    def _find_modal_button(
+        self,
+        bboxes: List[Dict],
+        *,
+        aria_keywords: Optional[List[str]] = None,
+        text_tokens: Optional[Iterable[str]] = None,
+        modal_bbox: Optional[Dict] = None,
+    ) -> Optional[Dict]:
+        aria_keywords = [kw.lower() for kw in (aria_keywords or [])]
+        normalized_tokens = [self._normalize_text(token) for token in (text_tokens or []) if token]
+
+        for bbox in bboxes:
+            if bbox.get("type") != "button":
+                continue
+            aria = (bbox.get("ariaLabel") or "").lower()
+            text = (bbox.get("text") or "").strip().lower()
+            if modal_bbox and not self._within_modal(bbox, modal_bbox):
+                continue
+            if aria_keywords and any(keyword in aria for keyword in aria_keywords):
+                return bbox
+            if normalized_tokens and any(token in text for token in normalized_tokens):
+                return bbox
+        return None
+
+    def _find_option_element(self, bboxes: List[Dict], target_norm: str) -> Optional[Dict]:
+        if not target_norm:
+            return None
+        for bbox in bboxes:
+            text = (bbox.get("text") or "").strip()
+            if not text:
+                continue
+            normalized = self._normalize_text(text)
+            if normalized == target_norm or target_norm in normalized:
+                return bbox
+        return None
+
+    def _action_targets(self, action: Dict, element_index: int) -> bool:
+        if not action:
+            return False
+        return (
+            action.get("action") in {"click", "type"}
+            and action.get("element_id") == element_index
+        )
+
+    def _find_description_bbox(self, bboxes: List[Dict], modal_bbox: Optional[Dict] = None) -> Optional[Dict]:
+        aria_keywords = [kw.lower() for kw in self.DESCRIPTION_ARIA_KEYWORDS]
+        for bbox in bboxes:
+            element_type = (bbox.get("type") or "").lower()
+            role = (bbox.get("role") or "").lower()
+            aria = (bbox.get("ariaLabel") or "").lower()
+            if modal_bbox and not self._within_modal(bbox, modal_bbox):
+                continue
+            if element_type == "textarea":
+                return bbox
+            if role == "textbox" and any(keyword in aria for keyword in aria_keywords):
+                return bbox
+            if any(keyword in aria for keyword in aria_keywords):
+                return bbox
+        return None
+
+    def _find_project_name_bbox(self, bboxes: List[Dict], modal_bbox: Optional[Dict] = None) -> Optional[Dict]:
+        aria_keywords = ["project name", "name field", "title"]
+        for bbox in bboxes:
+            element_type = (bbox.get("type") or "").lower()
+            role = (bbox.get("role") or "").lower()
+            aria = (bbox.get("ariaLabel") or "").lower()
+            text = (bbox.get("text") or "").strip().lower()
+            if modal_bbox and not self._within_modal(bbox, modal_bbox):
+                continue
+            if role == "textbox" or element_type in {"div", "input"}:
+                if any(keyword in aria for keyword in aria_keywords):
+                    return bbox
+                if text in {"untitled", "new project"}:
+                    return bbox
+        return None
+
+    def _find_status_control(self, bboxes: List[Dict]) -> Optional[Dict]:
+        for bbox in bboxes:
+            if (bbox.get("type") or "").lower() not in {"button", "div", "span"}:
+                continue
+            aria = (bbox.get("ariaLabel") or "").lower()
+            text = (bbox.get("text") or "").strip().lower()
+            if "order by" in aria or "sort" in aria:
+                continue
+            if "change project status" in aria or "change status" in aria:
+                return bbox
+            if "status" in aria and "order by" not in aria:
+                return bbox
+            if text in {"backlog", "todo", "planned"}:
+                return bbox
+        return None
+
+    def _find_priority_control(self, bboxes: List[Dict]) -> Optional[Dict]:
+        for bbox in bboxes:
+            if (bbox.get("type") or "").lower() not in {"button", "div", "span"}:
+                continue
+            aria = (bbox.get("ariaLabel") or "").lower()
+            text = (bbox.get("text") or "").strip().lower()
+            if "order by" in aria or "sort" in aria:
+                continue
+            if "change project priority" in aria or "change priority" in aria:
+                return bbox
+            if "priority" in aria and "order by" not in aria:
+                return bbox
+            if text in {"no priority", "priority", "urgent", "high priority", "medium priority", "low priority"}:
+                return bbox
+        return None
+
+    def _find_dropdown_search(
+        self, bboxes: List[Dict], placeholder_keywords: Iterable[str]
+    ) -> Optional[Dict]:
+        keywords = [kw.lower() for kw in placeholder_keywords]
+        for bbox in bboxes:
+            element_type = (bbox.get("type") or "").lower()
+            role = (bbox.get("role") or "").lower()
+            aria = (bbox.get("ariaLabel") or "").lower()
+            placeholder = (bbox.get("placeholder") or "").lower()
+
+            if element_type in {"input", "textbox"} or role == "textbox":
+                if any(keyword in aria for keyword in keywords) or any(
+                    keyword in placeholder for keyword in keywords
+                ):
+                    return bbox
+        return None
+
+    def _find_submit_control(self, bboxes: List[Dict], modal_bbox: Optional[Dict] = None) -> Optional[Dict]:
+        submit_keywords = [
+            "create project",
+            "create new project",
+            "create",
+            "submit",
+            "finish",
+            "done",
+            "save project",
+            "confirm",
+        ]
+        for bbox in bboxes:
+            element_type = (bbox.get("type") or "").lower()
+            role = (bbox.get("role") or "").lower()
+            if element_type not in {"button"} and role != "button":
+                continue
+            if modal_bbox and not self._within_modal(bbox, modal_bbox):
+                continue
+            text = (bbox.get("text") or "").strip().lower()
+            aria = (bbox.get("ariaLabel") or "").strip().lower()
+            combined = f"{text} {aria}".strip()
+            if any(keyword in combined for keyword in submit_keywords):
+                if "create new issue" in combined or "new view" in combined:
+                    continue
+                return bbox
+        return None
+
+    def _auto_description_text(self) -> str:
+        parameters = self.task_config.get("parameters", {}) or {}
+        project_name = parameters.get("project_name") or parameters.get("name") or "this project"
+        return f"Automated description for {project_name} created by Agent B."
+
+    def _extract_modal_bbox(self, ui_state: Dict) -> Optional[Dict]:
+        modals = ui_state.get("modals") or []
+        for modal in modals:
+            bbox = modal.get("bbox")
+            if bbox and bbox.get("width", 0) >= 50 and bbox.get("height", 0) >= 50:
+                return bbox
+        return None
+
+    def _within_modal(self, bbox: Dict, modal_bbox: Dict) -> bool:
+        if not modal_bbox:
+            return False
+        x = bbox.get("x")
+        y = bbox.get("y")
+        if x is None or y is None:
+            return False
+        left = modal_bbox.get("x", 0)
+        top = modal_bbox.get("y", 0)
+        right = left + modal_bbox.get("width", 0)
+        bottom = top + modal_bbox.get("height", 0)
+        return left <= x <= right and top <= y <= bottom
 
     def _is_date_visible(self, value: str, texts: List[str]) -> bool:
         token_sets = self._date_token_sets(value)
@@ -478,6 +909,10 @@ class SubGoalManager:
             return f"Next required step: set the target/due date to '{value}'."
         if key == "filter":
             return f"Next required step: open the filter panel and apply '{value}'."
+        if key == "description":
+            if value:
+                return f"Next required step: type the project description '{value}'."
+            return "Next required step: add a project description."
         if key == "submit":
             return "All required fields are satisfied. Click the primary submit/create button to finish."
         return ""
@@ -487,3 +922,9 @@ class SubGoalManager:
             if goal["key"] == key:
                 return goal["completed"]
         return False
+        control = self._find_priority_control(bboxes)
+        if control:
+            current_text = (control.get("text") or "").strip().lower()
+            target_norm = self._normalize_text(value)
+            if target_norm and target_norm in current_text and "priority" not in current_text:
+                return None

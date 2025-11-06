@@ -260,9 +260,12 @@ Examples:
         Returns:
             Structured action dictionary
         """
-        # Extract action line
+        # Extract reasoning and action line
+        reasoning_text = ""
         if "ACTION:" in response_text:
-            action_line = response_text.split("ACTION:")[-1].strip()
+            parts = response_text.split("ACTION:")
+            reasoning_text = parts[0].strip()
+            action_line = parts[-1].strip()
         else:
             action_line = response_text.strip()
         
@@ -279,7 +282,7 @@ Examples:
             return {
                 "action": "wait",
                 "raw_response": response_text,
-                "reasoning": "Could not parse action"
+                "reasoning": reasoning_text or "Could not parse action"
             }
         
         action_type = action_words[0].lower()
@@ -287,7 +290,7 @@ Examples:
         result = {
             "action": action_type,
             "raw_response": response_text,
-            "reasoning": ""
+            "reasoning": reasoning_text
         }
         
         # Parse based on action type
