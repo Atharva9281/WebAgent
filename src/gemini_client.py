@@ -8,9 +8,12 @@ Handles all AI-related operations:
 - Task completion validation
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 from datetime import datetime
+import base64
 import json
+import re
+
 import google.generativeai as genai
 
 
@@ -61,7 +64,7 @@ class GeminiClient:
 
             # Format action history
             history_text = self._format_history(action_history)
-            
+
             # Build comprehensive prompt
             prompt = self._build_prompt(
                 goal,
@@ -71,16 +74,19 @@ class GeminiClient:
                 task_parameters,
                 hint
             )
-            
+
+            # Decode the screenshot into raw bytes for Gemini vision input
+            screenshot_bytes = base64.b64decode(screenshot_b64) if screenshot_b64 else b""
+
             # Call Gemini with vision
             response = self.model.generate_content([
                 prompt,
                 {
                     "mime_type": "image/png",
-                    "data": screenshot_b64
+                    "data": screenshot_bytes
                 }
             ])
-            
+
             response_text = response.text.strip()
             
             # Parse and return structured action
@@ -356,33 +362,36 @@ Examples:
     
     def _parse_click_action(self, main_part: str) -> Dict:
         """Parse click action to extract element ID"""
-        try:
-            # Extract number: "click [5]" or "click 5"
-            number_str = main_part.split()[-1].strip("[]")
-            element_id = int(number_str)
-            return {"element_id": element_id}
-        except (ValueError, IndexError):
-            return {"element_id": 0}
+        element_id = self._extract_element_id(main_part)
+        return {"element_id": element_id if element_id is not None else 0}
     
     def _parse_type_action(self, main_part: str, parts: List[str]) -> Dict:
         """Parse type action to extract element ID and text"""
         result = {}
         
-        try:
-            # Extract number: "type [5]" 
-            action_words = main_part.split()
-            number_str = action_words[-1].strip("[]")
-            result["element_id"] = int(number_str)
-        except (ValueError, IndexError):
-            result["element_id"] = 0
+        element_id = self._extract_element_id(main_part)
+        result["element_id"] = element_id if element_id is not None else 0
         
         # Extract text after semicolon
         if len(parts) > 1:
             result["text"] = parts[1].strip()
         else:
             result["text"] = ""
-        
+
         return result
+
+    def _extract_element_id(self, text: str) -> Optional[int]:
+        """Extract a numeric element identifier from Gemini output."""
+        match = re.search(r"\[(\d+)\]", text)
+        if not match:
+            match = re.search(r"(\d+)", text)
+        if not match:
+            return None
+        number_text = next(group for group in match.groups() if group)
+        try:
+            return int(number_text)
+        except (TypeError, ValueError):
+            return None
     
     def _parse_scroll_action(self, action_line: str) -> Dict:
         """Parse scroll action to extract direction"""

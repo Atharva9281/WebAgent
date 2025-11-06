@@ -14,6 +14,7 @@ Gemini sees annotated screenshots for decision making.
 import os
 import base64
 import io
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -375,8 +376,9 @@ class CleanBrowserController:
         self.page.mouse.click(bbox['centerX'], bbox['centerY'])
         self.page.wait_for_timeout(300)
         
-        # Clear existing text
-        self.page.keyboard.press("Control+A")
+        # Clear existing text with platform-appropriate shortcut
+        select_all = "Meta+A" if sys.platform == "darwin" else "Control+A"
+        self.page.keyboard.press(select_all)
         self.page.keyboard.press("Backspace")
         
         # Type new text
@@ -400,7 +402,7 @@ class CleanBrowserController:
     def _execute_wait(self) -> str:
         """Execute wait action"""
         self.page.wait_for_timeout(1000)
-        return "Waited 3 seconds"
+        return "Waited 1 second"
     
     def get_current_url(self) -> str:
         """Get current page URL"""
