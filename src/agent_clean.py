@@ -13,7 +13,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from agent_base import AgentBase, list_predefined_tasks
+from agent import AgentBase, list_predefined_tasks
 from agent_cli import (
     handle_batch,
     handle_query,
@@ -21,7 +21,7 @@ from agent_cli import (
     interactive_menu,
     print_launch_banner,
 )
-from browser_controller_clean import CleanBrowserController
+from browser import CleanBrowserController
 
 
 class CleanAgentB(AgentBase):

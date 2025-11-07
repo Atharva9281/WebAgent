@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-from agent_base import AgentBase
+from agent import AgentBase
 from task_definitions import TASKS
 
 

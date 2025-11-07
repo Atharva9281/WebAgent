@@ -51,10 +51,17 @@
       '[role="checkbox"]',
       '[role="radio"]',
       '[role="textbox"]',
+      '[role="combobox"]',
       '[onclick]',
       '[contenteditable="true"]',
       'summary',
-      '[tabindex]:not([tabindex="-1"])'
+      '[tabindex]:not([tabindex="-1"])',
+      '[data-testid]',
+      '[aria-haspopup]',
+      'div[class*="button"]',
+      'div[class*="Button"]',
+      'span[class*="button"]',
+      'span[class*="Button"]'
     ];
 
     // Find all interactive elements

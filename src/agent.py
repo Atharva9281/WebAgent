@@ -13,7 +13,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from agent_base import AgentBase, list_predefined_tasks
+from agent.base import AgentBase, list_predefined_tasks
 from agent_cli import (
     handle_batch,
     handle_query,

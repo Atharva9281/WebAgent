@@ -1,206 +1,276 @@
-# Agent B: Web Automation with Non-URL State Capture
+# SoftLight: Vision-Powered Web Automation Agent
 
-[![Demo Video](https://img.shields.io/badge/Demo-Loom%20Video-blue)](DEMO_LINK_HERE)
+An intelligent web automation agent that uses Gemini 2.0 Flash vision AI to perform natural language tasks on web applications like Linear and Notion.
 
-An intelligent web automation agent that captures rich UI states including modals, forms, and other non-URL-based interface changes using vision-powered decision making.
+## 🎯 What It Does
 
-## 🎯 Problem Solved
-
-Traditional web automation relies on URL changes to track navigation state. However, many modern web applications use modals, dropdowns, and dynamic content that don't trigger URL changes. **Agent B captures these non-URL states** by taking screenshots after every action and recording rich metadata about the UI state.
+SoftLight is a generalizable web automation agent that:
+- **Understands natural language queries** like "Create a project named Jobhunt in Linear"
+- **Uses vision AI** (Gemini 2.0 Flash) to see and understand web pages
+- **Automates complex workflows** across Linear and Notion
+- **Handles modals, forms, and dynamic content** automatically
+- **Tracks sub-goals** to complete multi-step tasks reliably
 
 ## ✨ Key Features
 
-- **Vision-Powered Navigation**: Uses Gemini 2.5 Flash to "see" the page and decide next actions
-- **Non-URL State Capture**: Records modals, forms, and dynamic content changes
-- **Saved Authentication**: Pre-authenticated sessions for Linear and Notion
-- **Set-of-Marks Annotation**: Numbered bounding boxes for precise element targeting
-- **Rich Metadata**: JSON output with URLs, actions, UI states, and more
+- **Natural Language Interface**: Describe tasks in plain English
+- **Vision-Powered Navigation**: Gemini sees the page and decides actions
+- **Sub-Goal Management**: Breaks complex tasks into trackable steps
+- **Modal & Form Detection**: Automatically handles dialogs and forms
+- **Set-of-Marks Annotation**: Numbered bounding boxes for element targeting
+- **Authenticated Sessions**: Pre-saved logins for Linear and Notion
 
 ## 🚀 Quick Start
 
-### 1. Setup Environment
+### 1. Install Dependencies
 
 ```bash
-# Clone and setup
-git clone <your-repo>
-cd agent-b
-
-# Install dependencies
+# Install Python dependencies
 pip install -r requirements.txt
 
-# Configure API key
-cp .env.example .env
-# Edit .env and add your GEMINI_API_KEY
+# Install Playwright browsers
+playwright install chromium
 ```
 
-### 2. Setup Authentication
+### 2. Configure Environment
 
 ```bash
-# Run auth setup for Linear and Notion
-python src/setup_auth.py
+# Copy example env file
+cp .env.example .env
+
+# Edit .env and add your Gemini API key
+# Get from: https://ai.google.dev/
+GEMINI_API_KEY=your_key_here
+```
+
+### 3. Setup Authentication (One-time)
+
+```bash
+# Login to Linear and Notion
+python3 src/setup_auth.py
 ```
 
 This opens browsers where you manually log in. Sessions are saved to `auth/` for reuse.
 
-### 3. Run Agent
+### 4. Run the Agent
 
 ```bash
-# Run all 5 tasks
-python src/agent.py
+# Interactive mode - type your queries
+python3 src/agent.py
 
-# Or run specific task
-python src/agent.py --task linear_create_project
-```
-
-### 4. View Results
-
-```bash
-# Check generated dataset
-ls dataset/
-
-# View screenshots and metadata
-open dataset/linear_create_project/step_1.png
-cat dataset/linear_create_project/metadata.json
+# Example queries:
+# - "Create project Assessment in Linear"
+# - "Create issue Jobhunt with urgent priority in Linear"
+# - "Show projects with backlog status in Linear"
 ```
 
 ## 📁 Project Structure
 
 ```
-agent-b/
+SoftLight_legacy/
 ├── README.md
+├── REFACTORING.md              # Code refactoring documentation
 ├── requirements.txt
-├── .env                    # API keys
-├── .gitignore
-├── auth/                   # Saved browser sessions
-│   ├── linear_state.json
-│   └── notion_state.json
-├── src/                    # Source code
-│   ├── agent.py           # Main agent
-│   ├── setup_auth.py      # Authentication setup
-│   └── mark_page.js       # Page annotation script
-├── dataset/               # Generated screenshots + metadata
-│   ├── linear_create_project/
-│   ├── linear_create_issue/
-│   ├── linear_filter_issues/
-│   ├── notion_create_page/
-│   └── notion_create_database/
-└── docs/                  # Documentation
-    ├── ARCHITECTURE.md
-    ├── TASKS.md
-    └── DEMO_SCRIPT.md
+├── .env                        # Configuration (API keys)
+│
+├── auth/                       # Saved browser sessions
+│   ├── linear_profile/
+│   └── notion_profile/
+│
+├── src/                        # Source code (refactored into modules)
+│   ├── agent/                  # Agent orchestration
+│   │   ├── base.py            # Main agent class
+│   │   ├── task_executor.py   # Task execution loop
+│   │   ├── helpers.py         # Utilities
+│   │   └── printing.py        # Display functions
+│   │
+│   ├── parser/                 # Natural language parsing
+│   │   ├── parser.py          # Main parser
+│   │   ├── task_builder.py    # Task configuration
+│   │   └── app_config.py      # App definitions
+│   │
+│   ├── subgoal/                # Sub-goal management
+│   │   ├── manager.py         # Goal tracking
+│   │   ├── action_guides.py   # Action guidance
+│   │   ├── element_finders.py # Element detection
+│   │   └── goal_checkers.py   # Completion checking
+│   │
+│   ├── gemini/                 # Gemini AI client
+│   │   ├── client.py          # API client
+│   │   ├── retry_logic.py     # Error handling
+│   │   └── parsing.py         # Response parsing
+│   │
+│   ├── detector/               # UI state detection
+│   │   ├── detector.py        # Main detector
+│   │   ├── modal_detector.py  # Modal/dialog detection
+│   │   └── form_detector.py   # Form field detection
+│   │
+│   ├── browser/                # Browser control
+│   │   ├── controller.py      # Main controller
+│   │   ├── actions.py         # Action execution
+│   │   └── utils.py           # Utilities
+│   │
+│   ├── browser_controller.py  # Browser with annotations
+│   ├── mark_page.js           # Page annotation script
+│   ├── agent.py               # CLI entrypoint
+│   ├── agent_cli.py           # CLI utilities
+│   ├── setup_auth.py          # Authentication setup
+│   └── task_definitions.py    # Predefined tasks
+│
+└── dataset/                    # Generated task recordings
+    └── README.md
 ```
 
-## 🎭 Example: Non-URL State Capture
+## 🎯 Example Usage
 
-Here's how Agent B captures states that traditional automation misses:
+### Create a Project in Linear
 
-```json
-{
-  "task": "create_project_linear",
-  "steps": [
-    {
-      "step": 1,
-      "action": "Navigate to Linear",
-      "url": "https://linear.app/projects",
-      "screenshot": "step_1.png",
-      "ui_state": {
-        "type": "list_view",
-        "visible_modals": []
-      }
-    },
-    {
-      "step": 2,
-      "action": "Click [12]",
-      "url": "https://linear.app/projects",  // SAME URL!
-      "screenshot": "step_2.png",
-      "ui_state": {
-        "type": "modal_open",
-        "visible_modals": [{"type": "dialog", "title": "Create Project"}],
-        "form_fields": [{"name": "project_name", "filled": false}]
-      }
-    }
-  ]
-}
+```bash
+$ python3 src/agent.py
+Enter your query: Create project Jobhunt and set priority urgent in Linear
 ```
 
-**Key Innovation**: Step 2 has the same URL as Step 1, but captures the modal opening state that traditional automation would miss.
+The agent will:
+1. Navigate to Linear projects page
+2. Open the "Create Project" modal
+3. Type "Jobhunt" in the name field
+4. Set priority to "Urgent"
+5. Generate an automated description
+6. Click "Create Project"
 
-## 🗂️ Dataset Tasks
+All steps are executed automatically with screenshots saved to `dataset/`.
 
-Agent B executes 5 tasks across 2 applications:
+### Filter Projects by Status
 
-### Linear (3 tasks)
-1. **Create Project** - Demonstrates modal state capture
-2. **Create Issue** - Shows form field state changes  
-3. **Filter Issues** - Captures dropdown and filter states
+```bash
+Enter your query: Show me projects with backlog status in Linear
+```
 
-### Notion (2 tasks)  
-4. **Create Page** - Records content editor states
-5. **Create Database** - Complex multi-step database creation
-
-## 🏗️ Architecture
-
-- **Browser Layer**: Playwright (visible Chrome browser)
-- **Annotation Layer**: Set-of-Marks JavaScript injection
-- **Vision Layer**: Gemini 2.5 Flash for decision making
-- **State Capture**: Screenshot + metadata after every action
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed technical overview.
+The agent will:
+1. Navigate to Linear projects
+2. Open the filter menu
+3. Select "Status" filter
+4. Choose "Backlog" option
+5. Display filtered results
 
 ## 🔧 Configuration
 
 ### Environment Variables (.env)
+
 ```bash
+# Required
 GEMINI_API_KEY=your_api_key_here
-BROWSER_HEADLESS=false           # Keep visible during automation
-SCREENSHOT_DELAY=1000           # Wait time after actions (ms)
+
+# Optional
+BROWSER_HEADLESS=false          # Keep browser visible
+SCREENSHOT_DELAY=1000           # Wait after actions (ms)
+MAX_STEPS_PER_TASK=20          # Maximum steps per task
+VERBOSE_LOGGING=true            # Detailed output
 ```
 
-### Task Configuration
-Edit task definitions in `src/agent.py` or see [docs/TASKS.md](docs/TASKS.md).
+## 🏗️ Architecture
 
-## 📊 Expected Output
+### Components
 
-After running all tasks, you'll have:
-- **25-50 screenshots** showing step-by-step UI navigation
-- **Rich JSON metadata** for each action and state change
-- **Authenticated sessions** saved for future runs
-- **Complete dataset** ready for analysis or training
+1. **Natural Language Parser** (`src/parser/`)
+   - Converts user queries into structured task configs
+   - Uses Gemini to understand intent
 
-## 🎬 Demo Video
+2. **Sub-Goal Manager** (`src/subgoal/`)
+   - Breaks tasks into trackable goals
+   - Guides actions to complete objectives
+   - Validates completion
 
-[📺 Watch 3-minute Loom demo](DEMO_LINK_HERE) - See Agent B in action
+3. **Browser Controller** (`src/browser/`)
+   - Controls Playwright browser
+   - Injects Set-of-Marks annotations
+   - Captures screenshots
+
+4. **State Detector** (`src/detector/`)
+   - Detects modals, forms, dropdowns
+   - Tracks UI state changes
+   - Identifies loading states
+
+5. **Vision AI Client** (`src/gemini/`)
+   - Sends annotated screenshots to Gemini
+   - Gets next action decisions
+   - Handles retries and errors
+
+### How It Works
+
+```
+User Query → Parser → Task Config → Sub-Goals
+                                        ↓
+Screenshot ← Browser ← Action ← Gemini Vision
+     ↓                              ↑
+State Detector → Update Goals → Next Action
+```
+
+## 📊 Supported Tasks
+
+### Linear
+- ✅ Create projects with status, priority, description
+- ✅ Create issues with status, priority, description
+- ✅ Filter projects/issues by status
+- ✅ Update project/issue properties
+
+### Notion
+- ✅ Create pages
+- ✅ Create databases
+- (More tasks being added)
 
 ## 🔍 Troubleshooting
 
-**Authentication Issues**: Delete `auth/*.json` and re-run `setup_auth.py`
+### Authentication Issues
+```bash
+# Delete saved sessions and re-authenticate
+rm -rf auth/linear_profile auth/notion_profile
+python3 src/setup_auth.py
+```
 
-**Browser Crashes**: Set `BROWSER_HEADLESS=true` in `.env`
+### Browser Crashes
+```bash
+# Run in headless mode
+# In .env, set:
+BROWSER_HEADLESS=true
+```
 
-**API Errors**: Verify `GEMINI_API_KEY` in `.env`
+### API Errors
+```bash
+# Verify API key
+cat .env | grep GEMINI_API_KEY
 
-**Slow Performance**: Increase `SCREENSHOT_DELAY` in `.env`
+# Check API quota at: https://ai.google.dev/
+```
+
+### Import Errors
+```bash
+# Reinstall dependencies
+pip install -r requirements.txt --force-reinstall
+```
 
 ## 📚 Documentation
 
-- [Architecture Overview](docs/ARCHITECTURE.md)
-- [Task Definitions](docs/TASKS.md)
-- [Demo Recording Guide](docs/DEMO_SCRIPT.md)
+- [REFACTORING.md](REFACTORING.md) - Code refactoring details
+- [dataset/README.md](dataset/README.md) - Dataset structure
+- [auth/README.md](auth/README.md) - Authentication guide
 
 ## 🤝 Contributing
 
+This is a research project. Contributions welcome!
+
 1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - see LICENSE file for details.
 
 ## 🙏 Acknowledgments
 
-- [WebVoyager](https://arxiv.org/abs/2401.13919) for Set-of-Marks inspiration
-- [Playwright](https://playwright.dev/) for reliable browser automation
-- [Gemini](https://ai.google.dev/) for vision-powered decision making
+- [WebVoyager](https://arxiv.org/abs/2401.13919) - Set-of-Marks inspiration
+- [Playwright](https://playwright.dev/) - Browser automation
+- [Gemini 2.0 Flash](https://ai.google.dev/) - Vision AI
