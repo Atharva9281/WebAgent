@@ -69,7 +69,6 @@ python3 src/agent.py
 ```
 SoftLight_legacy/
 ├── README.md
-├── REFACTORING.md              # Code refactoring documentation
 ├── requirements.txt
 ├── .env                        # Configuration (API keys)
 │
@@ -77,7 +76,7 @@ SoftLight_legacy/
 │   ├── linear_profile/
 │   └── notion_profile/
 │
-├── src/                        # Source code (refactored into modules)
+├── src/                        # Source code 
 │   ├── agent/                  # Agent orchestration
 │   │   ├── base.py            # Main agent class
 │   │   ├── task_executor.py   # Task execution loop
@@ -251,7 +250,6 @@ pip install -r requirements.txt --force-reinstall
 
 ## 📚 Documentation
 
-- [REFACTORING.md](REFACTORING.md) - Code refactoring details
 - [dataset/README.md](dataset/README.md) - Dataset structure
 - [auth/README.md](auth/README.md) - Authentication guide
 
