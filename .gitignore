@@ -82,3 +82,7 @@ yarn-error.log*
 
 # Documentation
 REFACTORING.md
+docs/
+
+# Dataset metadata that should stay local
+dataset/README.md
