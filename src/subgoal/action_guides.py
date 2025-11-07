@@ -256,7 +256,9 @@ def adjust_action(action: Dict, ui_state: Dict, bboxes: List[Dict], pending_goal
         and ui_state.get("modals")
     ):
         target_value = (pending_goal.get("value") or "").strip().lower()
-        candidate_bbox = None
+        
+        # First priority: Look for exact match of target value (e.g., "Backlog")
+        target_bbox = None
         for bbox in bboxes:
             combined_parts = []
             if bbox.get("text"):
@@ -267,27 +269,46 @@ def adjust_action(action: Dict, ui_state: Dict, bboxes: List[Dict], pending_goal
             if not combined:
                 continue
             if target_value and target_value in combined:
-                candidate_bbox = bbox
+                target_bbox = bbox
                 break
-
-        if candidate_bbox:
-            candidate_index = candidate_bbox["index"]
-            if action["action"] != "click" or action.get("element_id") != candidate_index:
+        
+        if target_bbox:
+            # Found the target value - click it
+            if action["action"] != "click" or action.get("element_id") != target_bbox["index"]:
                 return {
                     "action": "click",
-                    "element_id": candidate_index,
-                    "reasoning": f"Select the filter option matching '{target_value}'",
+                    "element_id": target_bbox["index"],
+                    "reasoning": f"Select the filter option '{target_value}'",
                 }
         else:
+            # Target not visible yet - check if we need to click "Status" first
+            # Look for Status option in the filter panel (has low index, not a column header)
+            status_option = None
+            for bbox in bboxes:
+                text = (bbox.get("text") or "").strip().lower()
+                aria = (bbox.get("ariaLabel") or "").strip().lower()
+                # Must be "Status" text, NOT "Order by Status" aria-label, and low index (in modal)
+                if text == "status" and "order" not in aria and bbox["index"] < 150:
+                    status_option = bbox
+                    break
+            
+            if status_option:
+                # Click "Status" to reveal status options
+                if action["action"] != "click" or action.get("element_id") != status_option["index"]:
+                    return {
+                        "action": "click",
+                        "element_id": status_option["index"],
+                        "reasoning": "Click Status filter option in modal",
+                    }
+            
+            # Allow relevant clicks to proceed
             if action["action"] == "click" and element_text:
-                relevant_tokens = ["status", "workflow", "filter", "add", "condition", target_value]
+                relevant_tokens = ["status", "workflow", "filter", target_value]
                 if any(token for token in relevant_tokens if token and token in element_text):
                     return action
-            if action["action"] == "type":
-                return action
-            if action["action"] != "wait":
-                pass
-            return {"action": "wait", "reasoning": "Waiting for filter options to appear"}
+            
+            # Otherwise wait briefly
+            return action
 
     # Block cancel/close actions while modal is open
     if should_block_cancel_close(action, element_text, ui_state):

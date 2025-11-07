@@ -36,7 +36,7 @@ def setup_goals(task_config: Dict) -> List[Dict]:
     )
     priority_value = params.get("priority") or params.get("importance") or params.get("urgency")
     target_value = params.get("target_date") or params.get("due_date") or params.get("deadline")
-    filter_value = params.get("filter") or params.get("filter_status")
+    filter_value = params.get("filter") or params.get("filter_status") or params.get("status")
     description_value = (
         params.get("description")
         or params.get("project_description")
@@ -50,6 +50,10 @@ def setup_goals(task_config: Dict) -> List[Dict]:
             obj_name = name_value or ("project" if is_project else "issue")
             description_value = f"Automated description for {obj_name}."
 
+    # For filter queries, use status as filter value (not for create/modify)
+    if not is_create_modify and not filter_value and status_value:
+        filter_value = status_value
+    
     if not filter_value and not is_create_modify:
         # Fallback: infer filter target from goal text (only if NOT creating/modifying)
         STATUS_KEYWORDS = [
